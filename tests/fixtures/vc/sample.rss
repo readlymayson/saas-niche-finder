@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>VC.ru</title>
+    <link>https://vc.ru/</link>
+    <item>
+      <title>B2B SaaS для логистики</title>
+      <link>https://vc.ru/finance/123456-b2b-saas</link>
+      <pubDate>Mon, 01 Apr 2026 12:00:00 +0300</pubDate>
+      <description>Краткое описание поста в ленте.</description>
+    </item>
+    <item>
+      <title>Второй пост про маркетинг</title>
+      <link>https://vc.ru/marketing/789012-marketing</link>
+      <pubDate>Tue, 02 Apr 2026 09:30:00 +0300</pubDate>
+      <description></description>
+    </item>
+  </channel>
+</rss>
