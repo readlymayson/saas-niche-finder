@@ -8,6 +8,7 @@ RUN apt-get update \
 
 COPY pyproject.toml .
 COPY app ./app
+COPY ml ./ml
 COPY celery_app.py .
 
 RUN pip install --no-cache-dir pip setuptools wheel \

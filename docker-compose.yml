@@ -34,6 +34,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/niche_finder
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-change-in-production}
+      YANDEX_DIRECT_OAUTH_TOKEN: ${YANDEX_DIRECT_OAUTH_TOKEN:-}
+      YANDEX_DIRECT_CLIENT_LOGIN: ${YANDEX_DIRECT_CLIENT_LOGIN:-}
+      YANDEX_GPT_API_KEY: ${YANDEX_GPT_API_KEY:-}
+      YANDEX_GPT_FOLDER_ID: ${YANDEX_GPT_FOLDER_ID:-}
     ports:
       - "8000:8000"
     depends_on:
@@ -51,6 +55,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/niche_finder
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-change-in-production}
+      YANDEX_DIRECT_OAUTH_TOKEN: ${YANDEX_DIRECT_OAUTH_TOKEN:-}
+      YANDEX_DIRECT_CLIENT_LOGIN: ${YANDEX_DIRECT_CLIENT_LOGIN:-}
+      YANDEX_GPT_API_KEY: ${YANDEX_GPT_API_KEY:-}
+      YANDEX_GPT_FOLDER_ID: ${YANDEX_GPT_FOLDER_ID:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,11 +74,30 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/niche_finder
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-change-in-production}
+      YANDEX_DIRECT_OAUTH_TOKEN: ${YANDEX_DIRECT_OAUTH_TOKEN:-}
+      YANDEX_DIRECT_CLIENT_LOGIN: ${YANDEX_DIRECT_CLIENT_LOGIN:-}
+      YANDEX_GPT_API_KEY: ${YANDEX_GPT_API_KEY:-}
+      YANDEX_GPT_FOLDER_ID: ${YANDEX_GPT_FOLDER_ID:-}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  # Обучение RuBERT / эмбеддинги: torch+transformers, не поднимается по умолчанию.
+  # Код `ml/` монтируется с хоста — правки без пересборки образа (пересборка нужна при смене зависимостей).
+  # Сборка датасета: docker compose --profile ml run --rm ml-train python ml/build_demo_dataset.py
+  # Обучение:        docker compose --profile ml run --rm ml-train
+  ml-train:
+    profiles: ["ml"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.ml
+    volumes:
+      - ./backend/ml:/app/ml
+    environment:
+      # При необходимости ограничить потоки (CPU)
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-4}
 
 volumes:
   pgdata:

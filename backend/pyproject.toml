@@ -23,6 +23,9 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "lxml>=5.3.0",
     "email-validator>=2.2.0",
+    "telethon>=1.36.0",
+    "pgvector>=0.3.6",
+    "natasha>=1.6.0",
 ]
 
 [project.optional-dependencies]
@@ -31,10 +34,15 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",
 ]
+ml = [
+    "torch>=2.2.0",
+    "transformers>=4.40.0",
+    "accelerate>=0.30.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*"]
+include = ["app*", "ml*"]
 
 [tool.ruff]
 line-length = 100

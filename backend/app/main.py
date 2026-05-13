@@ -2,8 +2,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
-from app.api import auth
+import app.models  # noqa: F401  # регистрация таблиц в metadata
+from app.api import auth, niches
 from app.db.base import Base
 from app.db.session import engine
 
@@ -11,6 +13,8 @@ from app.db.session import engine
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
     yield
     await engine.dispose()
@@ -31,6 +35,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(niches.router, prefix="/v1", tags=["niches"])
 
 
 @app.get("/health")

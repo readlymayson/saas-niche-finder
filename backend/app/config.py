@@ -13,6 +13,31 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
+    # Telegram (Telethon, user session): API id/hash из my.telegram.org
+    telegram_api_id: int | None = None
+    telegram_api_hash: str | None = None
+    # Файл сессии или пусто, если используется TELEGRAM_SESSION_STRING
+    telegram_session_path: str = ".data/telegram.session"
+    telegram_session_string: str | None = None
+    # Не более 30 сообщений в минуту (консервативно для user-аккаунта)
+    telegram_max_messages_per_minute: int = 30
+    telethon_flood_sleep_threshold: int = 60
+
+    # Яндекс.Директ API v5 — Вордстат (OAuth-токен пользователя с доступом к Директу)
+    yandex_direct_oauth_token: str | None = None
+    yandex_direct_client_login: str | None = None
+    yandex_direct_api_url: str = "https://api.direct.yandex.com/json/v5"
+
+    wordstat_cache_ttl_days: int = 7
+    wordstat_max_rps: float = 5.0
+    wordstat_max_keywords_per_report: int = 2000
+
+    # YandexGPT (Foundation Models): Api-Key и каталог (folder)
+    yandex_gpt_api_key: str | None = None
+    yandex_gpt_folder_id: str | None = None
+    yandex_gpt_api_url: str = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+    yandex_gpt_model_uri: str | None = None  # по умолчанию gpt://{folder}/yandexgpt/latest
+
 
 @lru_cache
 def get_settings() -> Settings:
