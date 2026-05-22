@@ -13,13 +13,13 @@ todos:
     status: pending
   - id: week3-wordstat-ygpt-db
     content: "Неделя 3: Wordstat httpx+json/v5/wordstatreports+reports, OAuth Bearer, кэш 7 дней, лимиты 5 rps/2000 ключей/10 отчётов; YandexGPT карточки; SQLAlchemy таблицы"
-    status: pending
+    status: in_progress
   - id: week4-api-celery-scoring
     content: "Неделя 4: API /v1/niches/*, /auth/*, JWT; Celery периодический парсинг; скоринг без G2; Natasha сущности"
-    status: pending
+    status: in_progress
   - id: week5-frontend
     content: "Неделя 5: лендинг, дашборд, карточка ниши, ЛК; интеграция API+JWT; Free 5 карточек/сутки"
-    status: pending
+    status: in_progress
   - id: week6-yookassa-qa-deploy
     content: "Неделя 6: ЮKassa save_payment_method+webhook payment.succeeded; pytest/locust; деплой Hetzner CX22 docker-compose"
     status: pending

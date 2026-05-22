@@ -12,6 +12,16 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
+    subscription_plan: Mapped[str] = mapped_column(
+        String(32), default="free", server_default="free"
+    )
+    subscription_status: Mapped[str] = mapped_column(
+        String(32), default="free", server_default="free"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+    @property
+    def is_pro(self) -> bool:
+        return self.subscription_status == "active" and self.subscription_plan == "pro"

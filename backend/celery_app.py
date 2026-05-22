@@ -23,6 +23,11 @@ celery_app.conf.update(
             "task": "app.workers.tasks.recompute_niche_scores",
             "schedule": crontab(minute="*/30"),
         },
+        "ingest-vc-fixtures-daily": {
+            "task": "app.workers.tasks.ingest_vc_rss",
+            "kwargs": {"limit": 5, "use_fixtures": True},
+            "schedule": crontab(minute=15, hour=3),
+        },
     },
 )
 celery_app.autodiscover_tasks(["app.workers"])

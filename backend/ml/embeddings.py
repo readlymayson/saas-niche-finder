@@ -1,5 +1,6 @@
 """
-Эмбеддинги 768 из RuBERT: последний скрытый слой, mean pooling по токенам (без CLS и без classification head).
+Эмбеддинги 768 из RuBERT: последний скрытый слой, mean pooling по токенам
+(без CLS и без classification head).
 Поддерживается базовая модель и чекпоинт после fine-tune (берётся encoder `bert`).
 """
 

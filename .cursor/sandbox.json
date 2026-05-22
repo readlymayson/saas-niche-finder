@@ -1,0 +1,11 @@
+{
+  "networkPolicy": {
+    "default": "deny",
+    "allow": [
+      "registry.npmjs.org",
+      "pypi.org",
+      "files.pythonhosted.org",
+      "*.pythonhosted.org"
+    ]
+  }
+}

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 import app.models  # noqa: F401  # регистрация таблиц в metadata
-from app.api import auth, niches
+from app.api import auth, billing, niches
 from app.db.base import Base
 from app.db.session import engine
 
@@ -36,8 +36,19 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(niches.router, prefix="/v1", tags=["niches"])
+app.include_router(billing.router, prefix="/v1/billing", tags=["billing"])
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready() -> dict[str, str]:
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception:
+        return {"status": "degraded", "database": "unavailable"}
+    return {"status": "ready", "database": "ok"}

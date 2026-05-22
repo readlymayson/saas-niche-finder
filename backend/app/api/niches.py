@@ -18,6 +18,7 @@ from app.schemas.niches import (
     NicheRead,
 )
 from app.services.natasha_entities import NatashaEntityService
+from app.services.usage_limit import enforce_niche_view_quota
 
 router = APIRouter()
 
@@ -29,7 +30,7 @@ async def get_top_niches(
     limit: int = Query(default=10, ge=1, le=100),
     min_score: float = Query(default=0.0),
 ) -> list[NicheRead]:
-    _ = user
+    await enforce_niche_view_quota(user)
     rows = await db.execute(
         select(NicheIdea)
         .where(or_(NicheIdea.score.is_(None), NicheIdea.score >= min_score))
@@ -54,7 +55,7 @@ async def search_niches(
     db: Annotated[AsyncSession, Depends(get_db)],
     q: str = Query(min_length=1, max_length=100),
 ) -> list[NicheRead]:
-    _ = user
+    await enforce_niche_view_quota(user)
     needle = f"%{q.strip()}%"
     rows = await db.execute(
         select(NicheIdea)
@@ -81,21 +82,32 @@ async def similar_niches(
     niche_id: int,
     limit: int = Query(default=5, ge=1, le=20),
 ) -> list[NicheRead]:
-    _ = user
+    await enforce_niche_view_quota(user)
     base_q = await db.execute(select(NicheIdea).where(NicheIdea.id == niche_id))
     base = base_q.scalar_one_or_none()
     if base is None:
         raise HTTPException(status_code=404, detail="Niche not found")
 
-    rows = await db.execute(
-        select(NicheIdea)
-        .where(NicheIdea.id != niche_id)
-        .order_by(
-            func.abs(func.coalesce(NicheIdea.score, 0.0) - (base.score or 0.0)).asc(),
-            NicheIdea.id.desc(),
+    if base.embedding is not None:
+        rows = await db.execute(
+            select(NicheIdea)
+            .where(NicheIdea.id != niche_id, NicheIdea.embedding.isnot(None))
+            .order_by(
+                NicheIdea.embedding.cosine_distance(base.embedding).asc(),
+                NicheIdea.id.desc(),
+            )
+            .limit(limit)
         )
-        .limit(limit)
-    )
+    else:
+        rows = await db.execute(
+            select(NicheIdea)
+            .where(NicheIdea.id != niche_id)
+            .order_by(
+                func.abs(func.coalesce(NicheIdea.score, 0.0) - (base.score or 0.0)).asc(),
+                NicheIdea.id.desc(),
+            )
+            .limit(limit)
+        )
     return [
         NicheRead(
             id=niche.id,

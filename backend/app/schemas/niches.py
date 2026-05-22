@@ -2,6 +2,14 @@ from pydantic import BaseModel, Field
 
 
 class NicheRead(BaseModel):
+    """Публичное представление ниши в JSON-ответах ``GET /v1/niches/top``,
+
+    ``GET /v1/niches/search`` и ``GET /v1/niches/{id}/similar``.
+
+    ``summary`` и ``score`` допускают ``None``, если соответствующее значение
+    отсутствует в данных.
+    """
+
     id: int
     slug: str
     title: str

@@ -1,0 +1,53 @@
+tasks:
+  - id: landing-hero-draft
+    title: Черновик hero-блока лендинга
+    description: |
+      Создай marketing/landing-hero.md: заголовок, подзаголовок, 3 буллета ценности,
+      CTA «Попробовать бесплатно». Без выдуманных цифр клиентов. РФ B2B тон.
+      Сохрани итог также в state/revenue/landing-hero-draft.md для SynGate.
+    acceptance: |
+      - Файлы marketing/landing-hero.md и state/revenue/landing-hero-draft.md существуют
+      - Каждый ≥ 400 символов осмысленного текста
+    priority: 30
+    status: pending
+    tags: [revenue, marketing, syngate]
+  - id: seo-titles-3
+    title: Три SEO-заголовка для блога
+    description: |
+      state/revenue/seo-titles-3.md — 3 варианта title (≤60 символов) + meta description
+      для тем: поиск B2B ниши, Wordstat для SaaS, анализ Telegram/VC.
+    acceptance: |
+      - state/revenue/seo-titles-3.md с 3 блоками title+description
+    priority: 25
+    status: pending
+    tags: [revenue, seo, syngate]
+  - id: onboarding-email-draft
+    title: Welcome-email после регистрации
+    description: |
+      marketing/onboarding-email.md и state/revenue/onboarding-email-draft.md:
+      краткое письмо (приветствие, 5 бесплатных карточек/день, ссылка на дашборд).
+    acceptance: |
+      - Оба файла на месте, без секретов и фейковых URL prod
+    priority: 22
+    status: pending
+    tags: [revenue, email, syngate]
+  - id: pricing-table-copy
+    title: Текст таблицы тарифов
+    description: |
+      marketing/pricing.md — Free vs Pro (990–2990 ₽/мес диапазон как в business-brief),
+      лимит 5 карточек/сутки для Free. Дубль в state/revenue/pricing-table-copy.md.
+    acceptance: |
+      - marketing/pricing.md и state/revenue/pricing-table-copy.md
+    priority: 20
+    status: pending
+    tags: [revenue, pricing, syngate]
+  - id: cold-outreach-50
+    title: Шаблон cold outreach (5 вариантов)
+    description: |
+      marketing/cold-outreach.md — 5 коротких писем для инди-хакеров/PM (разные углы).
+      state/revenue/cold-outreach-50.md — тот же контент для очереди approve.
+    acceptance: |
+      - 5 вариантов, каждый 80–200 слов
+    priority: 18
+    status: pending
+    tags: [revenue, distribution, syngate]

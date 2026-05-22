@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     yandex_gpt_api_url: str = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
     yandex_gpt_model_uri: str | None = None  # по умолчанию gpt://{folder}/yandexgpt/latest
 
+    free_niche_views_per_day: int = 5
+    embeddings_model_name: str = "DeepPavlov/rubert-base-cased"
+
+    # ЮKassa (prod только после human-gate / SYNGATE_ALLOW_YOOKASSA_PROD)
+    yookassa_shop_id: str | None = None
+    yookassa_secret_key: str | None = None
+    yookassa_return_url: str = "http://localhost:5173/billing/success"
+    yookassa_webhook_allow_unverified: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

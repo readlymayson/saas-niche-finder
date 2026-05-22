@@ -16,3 +16,10 @@ dist/
 # Telegram session / ML артефакты
 .data/
 backend/ml/artifacts/
+
+# CodeGraph (локальный индекс SynEvo / Cursor)
+.codegraph/
+
+# SynGate
+state/approval_queue.json
+state/PAUSE

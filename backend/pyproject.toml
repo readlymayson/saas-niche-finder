@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "SaaS Niche Finder API"
 requires-python = ">=3.11"
 dependencies = [
+    "setuptools>=65.0,<82",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "sqlalchemy[asyncio]>=2.0.36",

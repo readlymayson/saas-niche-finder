@@ -1,9 +1,11 @@
 import asyncio
+from pathlib import Path
 
 from celery import shared_task
 
 from app.db.session import async_session_maker
 from app.services.niche_pipeline import recompute_niche_scores, refresh_niches_from_raw_posts
+from app.services.vc_ingest import ingest_vc_from_fixtures, ingest_vc_from_rss
 
 
 @shared_task(name="app.workers.tasks.ping")
@@ -29,3 +31,16 @@ def recompute_scores_task() -> dict[str, int]:
 
     recalculated = asyncio.run(_run())
     return {"recalculated": recalculated}
+
+
+@shared_task(name="app.workers.tasks.ingest_vc_rss")
+def ingest_vc_rss(limit: int = 10, *, use_fixtures: bool = False) -> dict[str, int]:
+    fixtures = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "vc"
+
+    async def _run() -> dict[str, int]:
+        async with async_session_maker() as session:
+            if use_fixtures and fixtures.is_dir():
+                return await ingest_vc_from_fixtures(session, fixtures, limit=limit)
+            return await ingest_vc_from_rss(session, limit=limit)
+
+    return asyncio.run(_run())

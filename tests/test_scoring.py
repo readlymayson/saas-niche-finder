@@ -22,3 +22,7 @@ def test_score_from_payloads_reads_fields() -> None:
         {"pain_frequency": 4, "competitors_count": "2", "budget_signal": "3.5"},
     )
     assert score == 6.15
+
+
+def test_score_from_payloads_invalid_growth_string() -> None:
+    assert score_from_payloads({"growth": "not-a-number"}, None) == 0.0
