@@ -12,3 +12,5 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+# Generated context file for LLM — not part of the project
+repomix.txt
