@@ -34,6 +34,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/niche_finder
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-change-in-production}
+      CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","https://dashboard.nichefinder.com"]'
     ports:
       - "8000:8000"
     depends_on:

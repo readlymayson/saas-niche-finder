@@ -1,20 +1,50 @@
-import { Button } from "@/components/ui/button"
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { LoginPage } from "@/pages/LoginPage";
+import { DashboardPage } from "@/pages/DashboardPage";
+import type { ReactNode } from "react";
+
+function ProtectedRoute({ children }: { children: ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuth();
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Loading...</div>;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
+
+function AppRoutes() {
+  const { isAuthenticated } = useAuth();
+  return (
+    <Routes>
+      <Route
+        path="/login"
+        element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />}
+      />
+      <Route
+        path="/dashboard"
+        element={
+          <ProtectedRoute>
+            <DashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      {/* Billing success redirect */}
+      <Route
+        path="/billing/success"
+        element={<Navigate to="/dashboard?tab=billing" replace />}
+      />
+    </Routes>
+  );
+}
 
 function App() {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-6 p-8">
-      <div className="max-w-lg text-center space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">SaaS Niche Finder</h1>
-        <p className="text-muted-foreground">
-          MVP: B2B-ниши по Telegram, VC.ru и Яндекс.Вордстат (РФ).
-        </p>
-      </div>
-      <div className="flex gap-3">
-        <Button>Войти</Button>
-        <Button variant="outline">Регистрация</Button>
-      </div>
-    </div>
-  )
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
+    </BrowserRouter>
+  );
 }
 
-export default App
+export default App;
