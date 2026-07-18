@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: week2-telegram-ml
     content: "Неделя 2: Telethon 1.36+ (1 аккаунт, 30 сообщ/мин, flood_sleep_threshold=60); сбор+разметка 300 примеров; fine-tune RuBERT 3 эпохи LR=2e-5; эмбеддинги 768 из последнего hidden без cls head"
-    status: pending
+    status: in_progress
   - id: week3-wordstat-ygpt-db
     content: "Неделя 3: Wordstat httpx+json/v5/wordstatreports+reports, OAuth Bearer, кэш 7 дней, лимиты 5 rps/2000 ключей/10 отчётов; YandexGPT карточки; SQLAlchemy таблицы"
     status: in_progress
@@ -22,7 +22,7 @@ todos:
     status: in_progress
   - id: week6-yookassa-qa-deploy
     content: "Неделя 6: ЮKassa save_payment_method+webhook payment.succeeded; pytest/locust; деплой Hetzner CX22 docker-compose"
-    status: pending
+    status: in_progress
 isProject: false
 ---
 

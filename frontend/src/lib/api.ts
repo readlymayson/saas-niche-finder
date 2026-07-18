@@ -63,10 +63,35 @@ export async function searchNiches(q: string): Promise<NicheCard[]> {
   return res.json();
 }
 
+export async function fetchNiche(nicheId: number): Promise<NicheCard> {
+  const res = await fetch(`${API_BASE}/v1/niches/${nicheId}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseApiError(res));
+  return res.json();
+}
+
 export async function fetchSimilarNiches(nicheId: number, limit = 5): Promise<NicheCard[]> {
   const res = await fetch(`${API_BASE}/v1/niches/${nicheId}/similar?limit=${limit}`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error(await parseApiError(res));
+  return res.json();
+}
+
+export type PaymentResponse = {
+  payment_id: string;
+  confirmation_url: string;
+  amount_rub: string;
+  human_gate_required: boolean;
+  message: string | null;
+};
+
+export async function createPayment(): Promise<PaymentResponse> {
+  const res = await fetch(`${API_BASE}/v1/billing/create-payment`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

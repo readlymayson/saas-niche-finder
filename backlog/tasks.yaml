@@ -1,4 +1,34 @@
 tasks:
+- id: week2-telegram-celery-ml
+  title: Telegram Celery + pain classifier + ML check
+  description: |
+    telegram_ingest, ingest_telegram task, pain_classifier, fixtures,
+    check_artifact_metrics.py для accuracy >85%.
+  acceptance: pytest и ruff зелёные; docker ml-train по README
+  priority: 45
+  status: done
+  tags: [backend, celery, ml, telegram]
+- id: week6-yookassa-sdk
+  title: ЮKassa SDK + idempotency
+  description: yookassa в pyproject, Payment.create save_payment_method, ProcessedWebhook
+  acceptance: pytest billing зелёные
+  priority: 44
+  status: done
+  tags: [backend, billing]
+- id: week5-react-router
+  title: Frontend react-router + страницы
+  description: landing, dashboard, niche, account, billing success
+  acceptance: npm run build OK
+  priority: 43
+  status: done
+  tags: [frontend]
+- id: deploy-runbook-locust
+  title: docs/deploy + locustfile
+  description: Runbook Hetzner и locust smoke
+  acceptance: файлы в репо
+  priority: 42
+  status: done
+  tags: [docs, deploy]
 - id: pipeline-vc-ingest-celery
   title: VC ingest + обогащение niche_pipeline
   description: |

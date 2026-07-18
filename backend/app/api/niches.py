@@ -75,6 +75,26 @@ async def search_niches(
     ]
 
 
+@router.get("/niches/{niche_id}", response_model=NicheRead)
+async def get_niche(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    niche_id: int,
+) -> NicheRead:
+    await enforce_niche_view_quota(user)
+    row = await db.execute(select(NicheIdea).where(NicheIdea.id == niche_id))
+    niche = row.scalar_one_or_none()
+    if niche is None:
+        raise HTTPException(status_code=404, detail="Niche not found")
+    return NicheRead(
+        id=niche.id,
+        slug=niche.slug,
+        title=niche.title,
+        summary=niche.summary,
+        score=niche.score,
+    )
+
+
 @router.get("/niches/{niche_id}/similar", response_model=list[NicheRead])
 async def similar_niches(
     user: Annotated[User, Depends(get_current_user)],

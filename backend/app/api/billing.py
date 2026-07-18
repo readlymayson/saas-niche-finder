@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings, settings
 from app.db.session import get_db
 from app.deps import get_current_user
+from app.models.processed_webhook import ProcessedWebhook
 from app.models.user import User
 
 router = APIRouter()
@@ -38,22 +39,45 @@ def _yookassa_configured() -> bool:
 
 
 def _prod_billing_allowed() -> bool:
-    if os.environ.get("SYNGATE_ALLOW_YOOKASSA_PROD", "").lower() in ("1", "true", "yes"):
-        return True
-    return False
+    return os.environ.get("SYNGATE_ALLOW_YOOKASSA_PROD", "").lower() in ("1", "true", "yes")
+
+
+def _create_live_payment(user: User) -> CreatePaymentResponse:
+    from yookassa import Configuration, Payment
+
+    cfg = get_settings()
+    Configuration.configure(cfg.yookassa_shop_id, cfg.yookassa_secret_key)
+    idempotence_key = str(uuid.uuid4())
+    payload = {
+        "amount": {"value": cfg.yookassa_amount_rub, "currency": "RUB"},
+        "confirmation": {"type": "redirect", "return_url": cfg.yookassa_return_url},
+        "capture": True,
+        "save_payment_method": True,
+        "description": "Подписка SaaS Niche Finder Pro",
+        "metadata": {"user_email": user.email},
+    }
+    payment = Payment.create(payload, idempotence_key)
+    confirmation = payment.confirmation
+    url = getattr(confirmation, "confirmation_url", None) or cfg.yookassa_return_url
+    return CreatePaymentResponse(
+        payment_id=payment.id,
+        confirmation_url=url,
+        amount_rub=cfg.yookassa_amount_rub,
+        human_gate_required=False,
+        message=None,
+    )
 
 
 @router.post("/create-payment", response_model=CreatePaymentResponse)
 async def create_payment(
     user: Annotated[User, Depends(get_current_user)],
 ) -> CreatePaymentResponse:
-    _ = user
     if not _yookassa_configured():
         pid = f"stub-{uuid.uuid4().hex[:12]}"
         return CreatePaymentResponse(
             payment_id=pid,
             confirmation_url=f"{settings.yookassa_return_url}?payment_id={pid}&mode=stub",
-            amount_rub="990.00",
+            amount_rub=settings.yookassa_amount_rub,
             human_gate_required=True,
             message=(
                 "ЮKassa не настроена (.env). Merchant + SYNGATE_ALLOW_YOOKASSA_PROD для prod."
@@ -67,14 +91,13 @@ async def create_payment(
                 "Нужен SYNGATE_ALLOW_YOOKASSA_PROD после human approve."
             ),
         )
-    pid = f"live-{uuid.uuid4().hex[:12]}"
-    return CreatePaymentResponse(
-        payment_id=pid,
-        confirmation_url=f"{settings.yookassa_return_url}?payment_id={pid}",
-        amount_rub="990.00",
-        human_gate_required=False,
-        message="Интеграция ЮKassa: подключите SDK yookassa для реального confirmation_url.",
-    )
+    try:
+        return _create_live_payment(user)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"ЮKassa Payment.create failed: {e}",
+        ) from e
 
 
 def _verify_yookassa_signature(body: bytes, signature: str | None) -> bool:
@@ -103,10 +126,18 @@ async def yookassa_webhook(
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         raise HTTPException(status_code=400, detail="Invalid JSON") from e
 
-    event = data.get("event")
+    event = str(data.get("event", ""))
     obj = data.get("object") or {}
     if event != "payment.succeeded":
-        return {"status": "ignored", "event": str(event)}
+        return {"status": "ignored", "event": event}
+
+    payment_id = str(obj.get("id") or "")
+    if payment_id:
+        seen = await db.execute(
+            select(ProcessedWebhook).where(ProcessedWebhook.payment_id == payment_id)
+        )
+        if seen.scalar_one_or_none() is not None:
+            return {"status": "duplicate", "payment_id": payment_id}
 
     metadata = obj.get("metadata") or {}
     email = metadata.get("user_email")
@@ -120,5 +151,7 @@ async def yookassa_webhook(
 
     user.subscription_plan = "pro"
     user.subscription_status = "active"
+    if payment_id:
+        db.add(ProcessedWebhook(payment_id=payment_id, event=event))
     await db.commit()
     return {"status": "ok", "user": email}

@@ -28,6 +28,11 @@ celery_app.conf.update(
             "kwargs": {"limit": 5, "use_fixtures": True},
             "schedule": crontab(minute=15, hour=3),
         },
+        "ingest-telegram-fixtures-daily": {
+            "task": "app.workers.tasks.ingest_telegram",
+            "kwargs": {"use_fixtures": True, "limit_per_channel": 50},
+            "schedule": crontab(minute=30, hour=3),
+        },
     },
 )
 celery_app.autodiscover_tasks(["app.workers"])
