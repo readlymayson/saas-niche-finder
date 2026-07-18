@@ -1,9 +1,16 @@
+from __future__ import annotations
+
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Integer as SA_Integer
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.models.api_key import ApiKey
 
 
 class User(Base):
@@ -12,16 +19,17 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
-    subscription_plan: Mapped[str] = mapped_column(
-        String(32), default="free", server_default="free"
+    subscription_tier: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="free", server_default="free"
     )
-    subscription_status: Mapped[str] = mapped_column(
-        String(32), default="free", server_default="free"
+    yookassa_payment_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, default=None
+    )
+    subscription_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
-    @property
-    def is_pro(self) -> bool:
-        return self.subscription_status == "active" and self.subscription_plan == "pro"
+    api_keys: Mapped[list[ApiKey]] = relationship(back_populates="user")

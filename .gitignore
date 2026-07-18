@@ -12,14 +12,8 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+# Generated context file for LLM — not part of the project
+repomix.txt
 
-# Telegram session / ML артефакты
-.data/
+# ML model artifacts — too large for git, use Git LFS or external storage
 backend/ml/artifacts/
-
-# CodeGraph (локальный индекс SynEvo / Cursor)
-.codegraph/
-
-# SynGate
-state/approval_queue.json
-state/PAUSE
