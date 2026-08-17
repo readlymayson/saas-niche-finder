@@ -1,66 +1,105 @@
-# SaaS Niche Finder
+# SaaS Niche Finder — личный инструмент
 
-Монорепозиторий: backend (FastAPI), frontend (React + Vite).
+Приватная «машина» поиска B2B-ниш: парсинг VC.ru и Telegram, ML-скоринг
+(RuBERT + pgvector), Яндекс.Вордстат и YandexGPT. Без публичного
+DaaS-слоя: нет биллинга, тарифов, подписок, API-ключей и регистрации.
 
-## Локальная разработка (backend)
+## Архитектура
 
-### Виртуальное окружение
+- **Backend** (FastAPI, async) — `backend/app/`
+  - API: `/v1/*` (поиск, топ, детали, similar, export) + `/internal/*` (feedback, entities)
+  - Единый статический токен в заголовке `X-Api-Token` (или `Authorization: Bearer`)
+  - ETL-пайплайн: парсеры VC.ru/Telegram → ML (RuBERT pain-классификатор) → агрегация ниш
+  - Celery worker + beat (см. `backend/celery_app.py`)
+- **PostgreSQL** + pgvector (эмбеддинги 768-d) + **Redis** (Celery broker)
+- Фронтенд удалён — только API
+
+## Быстрый старт
+
+### 1. Переменные окружения
 
 ```bash
-python -m venv .venv
+cp .env.example .env   # заполните API_TOKEN и секреты (Telegram, Яндекс)
 ```
 
-Активация:
-
-- Windows (PowerShell): `.\.venv\Scripts\Activate.ps1`
-- Linux / macOS: `source .venv/bin/activate`
-
-### Установка зависимостей
-
-Из **корня** репозитория:
+### 2. База и Redis
 
 ```bash
-pip install -e "./backend[dev]"
+docker compose up -d postgres redis
 ```
 
-Группа `dev` ставит среду для тестов и [Ruff](https://docs.astral.sh/ruff/). Дополнительно для ML (torch, transformers): `pip install -e "./backend[ml]"` или сразу `pip install -e "./backend[dev,ml]"`. В PowerShell для extras безопаснее одиночные кавычки во всём аргументе, например `pip install -e './backend[dev,ml]'`.
+### 3. Миграция (только для существующей БД)
 
-### Переменные окружения
+Если БД уже была создана в «DaaS»-режиме — удалить старые таблицы
+users/api_keys и колонку feedback.user_id (эмбеддинги ниш сохраняются):
 
-Реальные секреты в репозиторий не попадают. Шаблон — файл [.env.example](.env.example) в корне: скопируйте его в `.env` и заполните значения локально.
+```bash
+docker compose exec -T postgres psql -U postgres -d niche_finder \
+  < backend/scripts/migrate_drop_users.sql
+```
 
-При запуске API `pydantic-settings` читает `.env` относительно **текущего рабочего каталога**. Если вы поднимаете сервер из каталога `backend/`, положите `.env` рядом (например `backend/.env`), предварительно скопировав из `.env.example`.
+### 4. API
 
-### Тесты и линтер
+```bash
+cd backend
+uvicorn app.main:app --reload
+# http://localhost:8000/docs  (Swagger)
+```
 
-Из **корня**:
+Проверка:
+
+```bash
+curl -H "X-Api-Token: $API_TOKEN" http://localhost:8000/v1/niches/top?limit=5
+# без токена → 401
+curl http://localhost:8000/v1/niches/top
+```
+
+### 5. Celery (парсинг + ML-пайплайн)
+
+```bash
+cd backend
+celery -A celery_app worker --loglevel=info
+celery -A celery_app beat --loglevel=info
+```
+
+или всё сразу:
+
+```bash
+docker compose up --build
+```
+
+## API
+
+Все эндпоинты требуют заголовок `X-Api-Token: <token>`.
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/v1/niches/top` | Топ-ниши по скору (пагинация, фильтр по категории) |
+| GET | `/v1/niches/search?q=...` | Полнотекстовый или семантический поиск (`query_embed=true`) |
+| GET | `/v1/niches/{id}` | Детали ниши (pain points, конкуренты, метрики) |
+| GET | `/v1/niches/{id}/similar` | Похожие ниши (pgvector cosine distance) |
+| GET | `/v1/niches/export` | Экспорт CSV / JSONL |
+| GET | `/internal/niches/top` | Топ (упрощённая схема) |
+| GET | `/internal/niches/search` | Поиск (упрощённая схема) |
+| GET | `/internal/niches/{id}` | Детали (упрощённая схема) |
+| GET | `/internal/niches/{id}/similar` | Похожие (упрощённая схема) |
+| POST | `/internal/feedback` | Отметить нишу (рейтинг/комментарий) |
+| GET | `/internal/niches/{id}/entities` | Извлечение сущностей (Natasha) |
+| GET | `/health` | Healthcheck |
+| GET | `/ready` | Проверка готовности БД |
+
+## Тесты и линтер
 
 ```bash
 python -m pytest
 python -m ruff check backend tests
 ```
 
-Пути к тестам и `PYTHONPATH` для пакета `app` задаются в [pytest.ini](pytest.ini).
+## Ключевые каталоги
 
-## Frontend (React + Vite)
-
-Из каталога [frontend/](frontend/):
-
-```bash
-cd frontend
-npm ci
-npm run dev
-```
-
-Приложение: http://localhost:5173 — CORS для API уже настроен в `backend/app/main.py`.
-
-Переменная `VITE_API_URL` (см. [.env.example](.env.example)) по умолчанию `http://127.0.0.1:8000`. Подробнее — [frontend/README.md](frontend/README.md).
-
-Поднимите API (`uvicorn app.main:app` из `backend/` или `docker compose up api`) перед входом в дашборд.
-
-## SynGate (полуавтономная выручка)
-
-- Бизнес-контекст: [state/business-brief.md](state/business-brief.md)
-- Revenue-бэклог: [backlog/revenue.yaml](backlog/revenue.yaml)
-- Черновики маркетинга: [marketing/](marketing/) — публикация после approve в `state/approval_queue.json`
-- Оркестратор: [SynEvo](../SynEvo) — `python -m synevo.loop --lane revenue` или `scripts/run_syngate_cycle.ps1`
+- `backend/app/api/` — роуты FastAPI
+- `backend/app/services/` — парсеры, ML, wordstat, yandex_gpt, пайплайн ниш
+- `backend/app/ml/` — RuBERT pain-классификатор, эмбеддинги
+- `backend/app/models/` — SQLAlchemy-модели (niche_ideas, raw_posts, feedback, wordstat_cache)
+- `backend/app/workers/tasks.py` — Celery-таски ETL
+- `backend/scripts/migrate_drop_users.sql` — миграция из DaaS-режима

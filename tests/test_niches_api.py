@@ -6,9 +6,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import niches
-from app.deps import get_current_user
+from app.config import settings
+from app.deps import verify_api_token
 from app.models.niche_idea import NicheIdea
-from app.models.user import User
 
 
 class _FakeResult:
@@ -30,22 +30,22 @@ class _FakeDb:
         )
 
 
-async def _fake_current_user() -> User:
-    return User(id=1, email="test@example.com", hashed_password="x")
-
-
 async def _fake_db() -> AsyncGenerator[_FakeDb, None]:
     yield _FakeDb()
+
+
+def _auth_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {settings.api_token}"}
 
 
 def test_get_top_niches_returns_rows() -> None:
     app = FastAPI()
     app.include_router(niches.router, prefix="/v1")
-    app.dependency_overrides[get_current_user] = _fake_current_user
+    app.dependency_overrides[verify_api_token] = lambda: None
     app.dependency_overrides[niches.get_db] = _fake_db
 
     with TestClient(app) as client:
-        resp = client.get("/v1/niches/top?limit=1&min_score=0")
+        resp = client.get("/v1/niches/top?limit=1&min_score=0", headers=_auth_headers())
 
     assert resp.status_code == 200
     data = resp.json()

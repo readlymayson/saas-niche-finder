@@ -7,10 +7,9 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.deps import get_current_user
+from app.deps import verify_api_token
 from app.models.feedback import Feedback
 from app.models.niche_idea import NicheIdea
-from app.models.user import User
 from app.schemas.niches import (
     FeedbackCreate,
     FeedbackRead,
@@ -18,19 +17,17 @@ from app.schemas.niches import (
     NicheRead,
 )
 from app.services.natasha_entities import NatashaEntityService
-from app.services.usage_limit import enforce_niche_view_quota
 
 router = APIRouter()
 
 
 @router.get("/niches/top", response_model=list[NicheRead])
 async def get_top_niches(
-    user: Annotated[User, Depends(get_current_user)],
+    _: Annotated[None, Depends(verify_api_token)],
     db: Annotated[AsyncSession, Depends(get_db)],
     limit: int = Query(default=10, ge=1, le=100),
     min_score: float = Query(default=0.0),
 ) -> list[NicheRead]:
-    await enforce_niche_view_quota(user)
     rows = await db.execute(
         select(NicheIdea)
         .where(or_(NicheIdea.score.is_(None), NicheIdea.score >= min_score))
@@ -51,11 +48,10 @@ async def get_top_niches(
 
 @router.get("/niches/search", response_model=list[NicheRead])
 async def search_niches(
-    user: Annotated[User, Depends(get_current_user)],
+    _: Annotated[None, Depends(verify_api_token)],
     db: Annotated[AsyncSession, Depends(get_db)],
     q: str = Query(min_length=1, max_length=100),
 ) -> list[NicheRead]:
-    await enforce_niche_view_quota(user)
     needle = f"%{q.strip()}%"
     rows = await db.execute(
         select(NicheIdea)
@@ -77,11 +73,10 @@ async def search_niches(
 
 @router.get("/niches/{niche_id}", response_model=NicheRead)
 async def get_niche(
-    user: Annotated[User, Depends(get_current_user)],
+    _: Annotated[None, Depends(verify_api_token)],
     db: Annotated[AsyncSession, Depends(get_db)],
     niche_id: int,
 ) -> NicheRead:
-    await enforce_niche_view_quota(user)
     row = await db.execute(select(NicheIdea).where(NicheIdea.id == niche_id))
     niche = row.scalar_one_or_none()
     if niche is None:
@@ -97,12 +92,11 @@ async def get_niche(
 
 @router.get("/niches/{niche_id}/similar", response_model=list[NicheRead])
 async def similar_niches(
-    user: Annotated[User, Depends(get_current_user)],
+    _: Annotated[None, Depends(verify_api_token)],
     db: Annotated[AsyncSession, Depends(get_db)],
     niche_id: int,
     limit: int = Query(default=5, ge=1, le=20),
 ) -> list[NicheRead]:
-    await enforce_niche_view_quota(user)
     base_q = await db.execute(select(NicheIdea).where(NicheIdea.id == niche_id))
     base = base_q.scalar_one_or_none()
     if base is None:
@@ -143,7 +137,7 @@ async def similar_niches(
 @router.post("/feedback", response_model=FeedbackRead)
 async def create_feedback(
     payload: FeedbackCreate,
-    user: Annotated[User, Depends(get_current_user)],
+    _: Annotated[None, Depends(verify_api_token)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> FeedbackRead:
     niche_q = await db.execute(select(NicheIdea).where(NicheIdea.id == payload.niche_id))
@@ -153,7 +147,6 @@ async def create_feedback(
 
     feedback = Feedback(
         niche_id=payload.niche_id,
-        user_id=user.id,
         rating=payload.rating,
         comment=payload.comment,
         source=payload.source,
@@ -166,7 +159,6 @@ async def create_feedback(
     return FeedbackRead(
         id=feedback.id,
         niche_id=feedback.niche_id,
-        user_id=feedback.user_id,
         rating=feedback.rating,
         comment=feedback.comment,
         source=feedback.source,
@@ -177,7 +169,7 @@ async def create_feedback(
 @router.get("/niches/{niche_id}/entities", response_model=NicheEntityExtractResponse)
 async def extract_niche_entities(
     niche_id: int,
-    _: Annotated[User, Depends(get_current_user)],
+    _: Annotated[None, Depends(verify_api_token)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> NicheEntityExtractResponse:
     row = await db.execute(select(NicheIdea).where(NicheIdea.id == niche_id))

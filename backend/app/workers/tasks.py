@@ -12,16 +12,16 @@ Pipeline:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 
 from celery import shared_task
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import async_session_maker
-from app.models.niche import NicheIdea, RawPost
+from app.models.niche_idea import NicheIdea
+from app.models.raw_post import RawPost
 
 logger = logging.getLogger(__name__)
 
@@ -301,9 +301,7 @@ def aggregate_niches() -> dict:
                 niche = existing.scalar_one_or_none()
 
                 # Calculate metrics
-                wordstat_requests = 0  # filled later by wordstat task
                 pain_points_data: list[dict] = []
-                competitor_data: list[dict] = []
                 embeddings: list[list[float]] = []
                 vcru_mentions = 0
 

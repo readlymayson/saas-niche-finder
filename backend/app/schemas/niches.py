@@ -33,7 +33,6 @@ class FeedbackCreate(BaseModel):
 class FeedbackRead(BaseModel):
     id: int
     niche_id: int
-    user_id: int | None
     rating: int
     comment: str | None
     source: str

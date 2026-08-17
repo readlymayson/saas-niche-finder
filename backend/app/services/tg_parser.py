@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ class TelegramParser:
             logger.warning("Cannot get entity for %s: %s", username, exc)
             return []
 
-        since = datetime.now(timezone.utc) - timedelta(hours=hours_back)
+        since = datetime.now(UTC) - timedelta(hours=hours_back)
         messages: list[dict] = []
 
         try:

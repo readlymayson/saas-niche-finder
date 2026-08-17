@@ -14,10 +14,6 @@ class Feedback(Base):
         ForeignKey("niche_ideas.id", ondelete="CASCADE"),
         index=True,
     )
-    user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     rating: Mapped[int] = mapped_column(Integer)
     comment: Mapped[str | None] = mapped_column(Text(), nullable=True)
     source: Mapped[str] = mapped_column(String(32), default="api")

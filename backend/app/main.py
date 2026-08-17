@@ -1,10 +1,9 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
-from app.api import api_keys, auth, billing, v1
-from app.config import settings
+from app.api import niches, v1
 from app.db.base import Base
 from app.db.session import engine
 from app.db.vector import enable_vector_extension
@@ -20,36 +19,32 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="NicheFinder DaaS API",
+    title="NicheFinder Internal API",
     description=(
-        "Data-as-a-Service API для B2B-скоринга ниш. "
-        "Анализ Яндекс.Вордстат, VC.ru и патентов РФ.\n\n"
+        "Личный инструмент поиска B2B-ниш: парсинг VC.ru и Telegram, "
+        "ML-скоринг (RuBERT + pgvector), Яндекс.Вордстат и YandexGPT.\n\n"
         "## Аутентификация\n"
-        "Используйте API-ключ в заголовке: `Authorization: Bearer nf_<prefix>_<secret>`\n"
-        "Ключи можно создать в Developer Portal.\n\n"
-        "## Тарифы\n"
-        "- **Free** (песочница): 10 запросов/мин\n"
-        "- **Developer**: 300 запросов/мин\n"
-        "- **Enterprise**: 3000 запросов/мин"
+        "Единственный статический токен в заголовке: `X-Api-Token: <token>`\n"
+        "(либо `Authorization: Bearer <token>`)."
     ),
     version="1.0.0",
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(auth.router, prefix="/auth", tags=["auth"])
-app.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
-app.include_router(billing.router, prefix="/billing", tags=["billing"])
 app.include_router(v1.router, prefix="/v1", tags=["v1"])
+app.include_router(niches.router, prefix="/internal", tags=["internal"])
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready() -> dict[str, str]:
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return {"status": "ready"}
+    except Exception:
+        return {"status": "degraded"}

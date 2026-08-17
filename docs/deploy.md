@@ -1,10 +1,10 @@
-# Деплой SaaS Niche Finder (Hetzner CX22)
+# Деплой SaaS Niche Finder (личный инструмент)
 
 Ориентир: Ubuntu 22.04+, Docker 24+, 2 vCPU / 4 GB RAM.
 
 ## 1. Сервер
 
-1. Создайте VPS (например Hetzner CX22), откройте порты **22**, **80**, **443**.
+1. Создайте VPS (например Hetzner CX22).
 2. Установите Docker и compose plugin.
 3. Клонируйте репозиторий в `/opt/saas-niche-finder`.
 
@@ -12,13 +12,15 @@
 
 Скопируйте `.env.example` → `.env` на сервере и задайте:
 
-- `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET_KEY`
+- `DATABASE_URL`, `REDIS_URL`
+- `API_TOKEN` — единственный токен доступа к API (сгенерируйте `openssl rand -hex 32`)
 - `TELEGRAM_*` (если live-парсинг)
 - `YANDEX_*` (Вордстат / YandexGPT)
-- `YOOKASSA_*` + `SYNGATE_ALLOW_YOOKASSA_PROD=1` после human-gate
-- `YOOKASSA_RETURN_URL=https://yourapp.ru/billing/success`
 
-## 3. ML-артефакт (неделя 2)
+> API не публикуется наружу: порт 8000 слушается внутри docker-сети
+> (или пробрасывается только на localhost сервера).
+
+## 3. ML-артефакт
 
 На машине с GPU или локально:
 
@@ -35,38 +37,29 @@ python backend/ml/check_artifact_metrics.py --min-accuracy 0.85
 docker compose up -d postgres redis api worker beat
 ```
 
+Миграция из старого DaaS-режима (только если БД уже существовала):
+
+```bash
+docker compose exec -T postgres psql -U postgres -d niche_finder \
+  < backend/scripts/migrate_drop_users.sql
+```
+
 Проверка:
 
 ```bash
 curl -s http://127.0.0.1:8000/health
 curl -s http://127.0.0.1:8000/ready
+curl -s -H "X-Api-Token: $API_TOKEN" http://127.0.0.1:8000/v1/niches/top?limit=5
+# без токена → 401
 ```
 
-## 5. Frontend
-
-Соберите статику и отдайте через nginx:
-
-```bash
-cd frontend && npm ci && npm run build
-```
-
-Пример nginx: `root /var/www/niche-finder/dist;` + proxy `/api` → `http://127.0.0.1:8000` (или отдельный поддомен API).
-
-## 6. Webhook ЮKassa
-
-URL: `https://yourapp.ru/v1/billing/webhooks/yookassa`  
-Событие: `payment.succeeded`. В metadata при оплате передаётся `user_email`.
-
-## 7. Нагрузочное тестирование
+## 5. Нагрузочное тестирование
 
 ```bash
 pip install locust
 locust -f locustfile.py --host http://127.0.0.1:8000
 ```
 
-Цель MVP: 100 RPS на `/health` и публичные маршруты с p95 < 500 ms (без тяжёлого ML на hot path).
+## 6. Бэкапы
 
-## 8. Бэкапы
-
-- Ежедневный `pg_dump` PostgreSQL
-- Redis — по необходимости (квоты Free переживут сброс)
+- Ежедневный `pg_dump` PostgreSQL (эмбеддинги pgvector входят в дамп)

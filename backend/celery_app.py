@@ -14,31 +14,12 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
-    beat_schedule={
-        "refresh-niches-pipeline-every-hour": {
-            "task": "app.workers.tasks.refresh_niches_pipeline",
-            "schedule": crontab(minute=0, hour="*"),
-        },
-        "recompute-niche-scores-every-30-min": {
-            "task": "app.workers.tasks.recompute_niche_scores",
-            "schedule": crontab(minute="*/30"),
-        },
-        "ingest-vc-fixtures-daily": {
-            "task": "app.workers.tasks.ingest_vc_rss",
-            "kwargs": {"limit": 5, "use_fixtures": True},
-            "schedule": crontab(minute=15, hour=3),
-        },
-        "ingest-telegram-fixtures-daily": {
-            "task": "app.workers.tasks.ingest_telegram",
-            "kwargs": {"use_fixtures": True, "limit_per_channel": 50},
-            "schedule": crontab(minute=30, hour=3),
-        },
-    },
 )
 celery_app.autodiscover_tasks(["app.workers"])
 
 # ── Celery Beat Schedule ──
-# Runs the entire ETL pipeline on a regular basis
+# Runs the entire ETL pipeline on a regular basis.
+# NOTE: only tasks defined in app/workers/tasks.py are scheduled here.
 
 celery_app.conf.beat_schedule = {
     # Scrape VC.ru every hour

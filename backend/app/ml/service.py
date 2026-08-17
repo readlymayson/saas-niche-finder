@@ -10,8 +10,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 # ── Lazy-loaded singleton ──

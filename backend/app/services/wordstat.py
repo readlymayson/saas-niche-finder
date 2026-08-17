@@ -1,18 +1,15 @@
-"""Async клиент для Яндекс.Вордстат / API Директа v5.
+"""
+Клиент Яндекс.Директ JSON API v5: Вордстат + кэш PostgreSQL (TTL 7 дней).
 
-Использует официальный JSON API:
-  - POST /v5/reports/wordstat — создание отчёта
-  - GET /v5/reports/{report_id} — получение результатов
-
-Лимиты: 5 RPS, максимум 10 отчётов в очереди.
-Кэширование ответов в БД на 7 дней.
+Сверьте method/params с актуальной справкой Директа (пример — wordstatreports в ТЗ).
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -20,180 +17,230 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.config import Settings, get_settings
+from app.models.wordstat_cache import WordstatCache
 
-logger = logging.getLogger(__name__)
 
-WORDSTAT_API_URL = "https://api.direct.yandex.com/json/v5/reports"
-REPORTS_API_URL = "https://api.direct.yandex.com/json/v5/reports"
+class WordstatAPIError(Exception):
+    def __init__(self, payload: dict[str, Any]) -> None:
+        super().__init__(str(payload))
+        self.payload = payload
 
-# Cache duration
-CACHE_TTL_DAYS = 7
 
-# Rate limits
-MAX_RPS = 5
-MAX_QUEUE = 10
+def normalize_keywords(keywords: list[str], *, max_count: int) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in keywords:
+        s = " ".join((k or "").strip().split())
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    if len(out) > max_count:
+        msg = f"Не более {max_count} ключевых фраз в одном запросе"
+        raise ValueError(msg)
+    if not out:
+        msg = "Пустой список ключевых фраз"
+        raise ValueError(msg)
+    return out
+
+
+def wordstat_cache_key(normalized_keywords: list[str]) -> str:
+    sorted_kw = sorted(normalized_keywords)
+    payload = json.dumps(sorted_kw, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+class AsyncRateLimiter:
+    def __init__(self, max_per_second: float) -> None:
+        self._interval = 1.0 / max_per_second if max_per_second > 0 else 0.0
+        self._lock = asyncio.Lock()
+        self._next_at = 0.0
+
+    async def acquire(self) -> None:
+        if self._interval <= 0:
+            return
+        async with self._lock:
+            now = time.monotonic()
+            wait = self._next_at - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._next_at = time.monotonic() + self._interval
+
+
+class YandexDirectJsonClient:
+    """POST на `.../json/v5/{service}` с Bearer OAuth."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._settings = settings
+        self._base = settings.yandex_direct_api_url.rstrip("/")
+        self._limiter = AsyncRateLimiter(settings.wordstat_max_rps)
+        self._own_client = http_client is None
+        self._client = http_client or httpx.AsyncClient(timeout=120.0)
+
+    async def aclose(self) -> None:
+        if self._own_client:
+            await self._client.aclose()
+
+    def _headers(self) -> dict[str, str]:
+        token = self._settings.yandex_direct_oauth_token
+        if not token:
+            msg = "Задайте YANDEX_DIRECT_OAUTH_TOKEN"
+            raise WordstatAPIError({"error_string": msg})
+        h: dict[str, str] = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=UTF-8",
+        }
+        if self._settings.yandex_direct_client_login:
+            h["Client-Login"] = self._settings.yandex_direct_client_login
+        return h
+
+    async def call(self, service: str, body: dict[str, Any]) -> dict[str, Any]:
+        url = f"{self._base}/{service.lstrip('/')}"
+        await self._limiter.acquire()
+        resp = await self._client.post(url, headers=self._headers(), json=body)
+        resp.raise_for_status()
+        data = resp.json()
+        err = data.get("error")
+        if err:
+            if isinstance(err, dict):
+                raise WordstatAPIError(err)
+            raise WordstatAPIError({"error": err})
+        result = data.get("result")
+        return result if isinstance(result, dict) else {}
+
+
+def _pick_report_id(obj: dict[str, Any]) -> str | None:
+    for key in ("ReportId", "reportId", "report_id", "Id"):
+        v = obj.get(key)
+        if v is not None:
+            return str(v)
+    return None
 
 
 class WordstatClient:
-    """Async client for Яндекс.Вордстат keyword statistics.
+    def __init__(self, direct: YandexDirectJsonClient) -> None:
+        self._d = direct
 
-    Requires YANDEX_DIRECT_TOKEN in settings.
-    """
-
-    def __init__(self) -> None:
-        self._token: str = settings.yandex_direct_token
-        self._client_login: str = settings.yandex_direct_login
-
-    async def get_keyword_stats(self, keywords: list[str]) -> dict[str, int]:
-        """Get monthly search volume for a list of keywords.
-
-        Args:
-            keywords: List of Russian-language search phrases.
-
-        Returns:
-            dict mapping keyword -> monthly_request_count.
-            Returns empty dict if API is not configured.
-        """
-        if not self._token:
-            logger.warning("YANDEX_DIRECT_TOKEN not configured, skipping Wordstat")
-            return {}
-
-        # Split into chunks of 10 (API limit per request)
-        chunk_size = 10
-        results: dict[str, int] = {}
-
-        for i in range(0, len(keywords), chunk_size):
-            chunk = keywords[i : i + chunk_size]
-            chunk_results = await self._fetch_wordstat_batch(chunk)
-            results.update(chunk_results)
-
-        return results
-
-    async def _fetch_wordstat_batch(self, keywords: list[str]) -> dict[str, int]:
-        """Fetch wordstat for a batch of keywords."""
-        headers = {
-            "Authorization": f"Bearer {self._token}",
-            "Client-Login": self._client_login,
-            "Accept-Language": "ru",
-            "Content-Type": "application/json",
-        }
-
-        payload = {
+    async def request_wordstat_report(self, keywords: list[str]) -> str:
+        """Запрос отчёта Вордстат: method=get, Keywords, WORDSTAT_REPORT (как в ТЗ)."""
+        body = {
             "method": "get",
             "params": {
-                "SelectionCriteria": {},
-                "FieldNames": [
-                    "Keyword",
-                    "SearchedWith",
-                    "SearchedAlso",
-                ],
-                "Keywords": keywords,
-                "ReportName": f"niche_finder_{datetime.now(UTC).timestamp():.0f}",
-                "ReportType": "WORDSTAT",
-                "DateRangeType": "LAST_MONTH",
-                "Format": "TSV",
+                "SelectionCriteria": {"Keywords": keywords},
+                "ReportType": "WORDSTAT_REPORT",
             },
         }
+        res = await self._d.call("wordstatreports", body)
+        rid = _pick_report_id(res)
+        if not rid and isinstance(res.get("Reports"), list) and res["Reports"]:
+            rid = _pick_report_id(res["Reports"][0])
+        if not rid:
+            msg = "Не удалось извлечь ReportId из ответа wordstatreports"
+            raise WordstatAPIError({"error_string": msg, "result": res})
+        return rid
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            try:
-                resp = await client.post(
-                    WORDSTAT_API_URL,
-                    headers=headers,
-                    json=payload,
-                )
-
-                if resp.status_code == 201:
-                    report_id = resp.headers.get("retryIn", "")
-                    return await self._poll_report(report_id, client, headers)
-                elif resp.status_code == 200:
-                    return self._parse_wordstat_response(resp.text)
-                elif resp.status_code == 400:
-                    logger.error("Wordstat API error 400: %s", resp.text)
-                    return {kw: 0 for kw in keywords}
-                else:
-                    logger.warning(
-                        "Wordstat API returned %s: %s", resp.status_code, resp.text[:200]
-                    )
-                    return {kw: 0 for kw in keywords}
-
-            except httpx.TimeoutException:
-                logger.warning("Wordstat API timeout for keywords: %s", keywords)
-                return {kw: 0 for kw in keywords}
-            except httpx.HTTPError as exc:
-                logger.warning("Wordstat API HTTP error: %s", exc)
-                return {kw: 0 for kw in keywords}
-
-    async def _poll_report(
+    async def fetch_report_json(
         self,
         report_id: str,
-        client: httpx.AsyncClient,
-        headers: dict[str, str],
-        max_retries: int = 10,
-    ) -> dict[str, int]:
-        """Poll for report completion."""
-        import asyncio
-
-        for attempt in range(max_retries):
-            await asyncio.sleep(3)
+        *,
+        retries: int = 30,
+        delay_sec: float = 2.0,
+    ) -> dict[str, Any]:
+        """
+        Получить готовый отчёт. При отложенной генерации — повторы с паузой.
+        """
+        last_err: Exception | None = None
+        for _ in range(max(1, retries)):
+            body = {"method": "get", "params": {"SelectionCriteria": {"ReportIds": [report_id]}}}
             try:
-                resp = await client.get(
-                    f"{REPORTS_API_URL}/{report_id}",
-                    headers=headers,
+                res = await self._d.call("reports", body)
+                return res
+            except WordstatAPIError as e:
+                last_err = e
+                detail = str(e.payload).lower()
+                if "not ready" in detail or "еще" in detail or "wait" in detail:
+                    await asyncio.sleep(delay_sec)
+                    continue
+                raise
+            except httpx.HTTPStatusError as e:
+                last_err = e
+                if e.response.status_code in (201, 202):
+                    await asyncio.sleep(delay_sec)
+                    continue
+                raise
+        if last_err:
+            raise last_err
+        msg = "Истекло время ожидания отчёта Вордстат"
+        raise TimeoutError(msg)
+
+
+class WordstatService:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        client: WordstatClient | None = None,
+    ) -> None:
+        self._settings = settings or get_settings()
+        self._direct = YandexDirectJsonClient(self._settings)
+        self._client = client or WordstatClient(self._direct)
+
+    async def aclose(self) -> None:
+        await self._direct.aclose()
+
+    async def get_keyword_stats(
+        self,
+        session: AsyncSession,
+        keywords: list[str],
+        *,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        max_k = self._settings.wordstat_max_keywords_per_report
+        normalized = normalize_keywords(keywords, max_count=max_k)
+        key = wordstat_cache_key(normalized)
+        now = datetime.now(UTC)
+        if not force_refresh:
+            q = await session.execute(
+                select(WordstatCache).where(
+                    WordstatCache.cache_key == key,
+                    WordstatCache.expires_at > now,
                 )
-                if resp.status_code == 200:
-                    return self._parse_wordstat_response(resp.text)
-            except httpx.HTTPError:
-                pass
+            )
+            hit = q.scalar_one_or_none()
+            if hit:
+                return {"cached": True, "keywords": hit.keywords, "payload": hit.report_payload}
+        report_id = await self._client.request_wordstat_report(normalized)
+        report_data = await self._client.fetch_report_json(report_id)
+        ttl_days = self._settings.wordstat_cache_ttl_days
+        expires = now + timedelta(days=ttl_days)
 
-        logger.warning("Wordstat report %s didn't complete after %d retries", report_id, max_retries)
-        return {}
-
-    def _parse_wordstat_response(self, tsv_data: str) -> dict[str, int]:
-        """Parse TSV response from Wordstat API."""
-        results: dict[str, int] = {}
-        for line in tsv_data.strip().split("\n"):
-            # Format: Keyword\tSearchedWith\tSearchedAlso
-            parts = line.strip().split("\t")
-            if len(parts) >= 2:
-                keyword = parts[0].strip()
-                try:
-                    # "SearchedWith" — monthly requests for exact phrase
-                    count_str = parts[1].strip().replace(" ", "").replace("\xa0", "")
-                    count = int(count_str) if count_str.isdigit() else 0
-                except (ValueError, IndexError):
-                    count = 0
-                results[keyword] = count
-        return results
-
-
-# ── Wordstat cache helpers ──
-
-
-def _wordstat_cache_key(keyword: str) -> str:
-    return hashlib.md5(keyword.encode("utf-8")).hexdigest()
-
-
-class WordstatCache:
-    """Database-backed cache for Wordstat responses."""
-
-    async def get(self, keyword: str, db: AsyncSession) -> int | None:
-        """Get cached wordstat count. Returns None if expired or missing."""
-        from app.models.niche import RawPost
-
-        cache_key = _wordstat_cache_key(keyword)
-        cutoff = datetime.now(UTC) - timedelta(days=CACHE_TTL_DAYS)
-
-        result = await db.execute(
-            select(RawPost)
-            .where(RawPost.source == "wordstat_cache")
-            .where(RawPost.source_id == cache_key)
-        )
-        # In a real implementation, use a dedicated cache table
-        return None
-
-    async def set(self, keyword: str, count: int, db: AsyncSession) -> None:
-        """Cache a wordstat response."""
-        # Would store in a dedicated cache table
-        pass
+        row = await session.execute(select(WordstatCache).where(WordstatCache.cache_key == key))
+        existing = row.scalar_one_or_none()
+        if existing:
+            existing.keywords = normalized
+            existing.report_payload = report_data
+            existing.fetched_at = now
+            existing.expires_at = expires
+        else:
+            session.add(
+                WordstatCache(
+                    cache_key=key,
+                    keywords=normalized,
+                    report_payload=report_data,
+                    fetched_at=now,
+                    expires_at=expires,
+                )
+            )
+        await session.commit()
+        return {
+            "cached": False,
+            "keywords": normalized,
+            "payload": report_data,
+            "report_id": report_id,
+        }
