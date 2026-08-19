@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 
 from celery import shared_task
@@ -22,6 +23,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import async_session_maker
 from app.models.niche_idea import NicheIdea
 from app.models.raw_post import RawPost
+
+# ── Helpers ──
+
+_CYRILLIC_TO_LATIN: dict[str, str] = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def _slugify(name: str, fallback_id: int) -> str:
+    """Transliterate a Russian niche name into an ASCII slug (lowercase)."""
+    transliterated = "".join(
+        _CYRILLIC_TO_LATIN.get(ch, ch) for ch in name.lower()
+    )
+    slug = re.sub(r"[^a-z0-9]+", "-", transliterated).strip("-")
+    return slug or f"niche-{fallback_id}"
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +109,8 @@ def scrape_vcru() -> dict:
 
                     raw = RawPost(
                         source="vcru",
+                        external_id=post.url,
+                        source_id=post.url,
                         url=post.url,
                         title=post.title,
                         body_text=post.body_text,
@@ -330,6 +352,8 @@ def aggregate_niches() -> dict:
 
                 if niche is None:
                     niche = NicheIdea(
+                        slug=_slugify(niche_name, fallback_id=0),
+                        title=niche_name,
                         niche_name=niche_name,
                         category="saas",
                         overall_score=0.0,

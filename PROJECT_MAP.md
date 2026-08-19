@@ -21,9 +21,9 @@ graph TD
         ML[ML: RuBERT pain-классификатор + эмбеддинги 768d]
         PIPE[Niche Pipeline]
         SCORE[Scoring]
-        APIv1[API v1]
+        APIv1[API v1: top / search / export / detail / similar]
         INT[Internal: feedback / entities]
-        AUTH[Статический токен X-Api-Token]
+        AUTH[Статический токен X-Api-Token / Bearer]
     end
 
     subgraph Infra[Инфраструктура]
@@ -54,34 +54,36 @@ graph TD
 saas-niche-finder/
 ├── backend/                  # FastAPI + Celery + ML (Python ≥3.11)
 │   ├── app/
-│   │   ├── main.py           # Точка входа FastAPI, роутеры, lifespan, /health, /ready
-│   │   ├── config.py         # pydantic-settings (БД, Redis, API_TOKEN, Telegram, Яндекс)
-│   │   ├── deps.py           # verify_api_token — статический токен (X-Api-Token / Bearer)
+│   │   ├── main.py           # Точка входа FastAPI: роутеры /v1 + /internal, lifespan (pgvector + create_all), /health, /ready
+│   │   ├── config.py         # pydantic-settings (БД, Redis, API_TOKEN, Telegram, Яндекс, rubert_pain_model_path)
+│   │   ├── deps.py           # verify_api_token — статический токен (X-Api-Token / Bearer), hmac.compare_digest
 │   │   ├── api/
-│   │   │   ├── v1.py         # /v1: поиск ниш, топ, детали, similar, CSV/JSONL-экспорт
+│   │   │   ├── v1.py         # /v1: top, search (ILIKE + query_embed pgvector), export (CSV/JSONL), detail, similar
 │   │   │   └── niches.py     # /internal: top, search, detail, similar, feedback, entities
-│   │   ├── db/               # base.py, session.py (async), vector.py (pgvector)
-│   │   ├── ml/               # service.py — RuBERT pain-классификация + эмбеддинги
+│   │   ├── db/               # base.py, session.py (async), vector.py (pgvector cosine)
+│   │   ├── ml/               # service.py — RuBERT pain-классификация + эмбеддинги 768-d
 │   │   ├── models/           # SQLAlchemy: niche_idea, raw_post, feedback, wordstat_cache
-│   │   ├── schemas/          # Pydantic: niches.py
+│   │   ├── schemas/          # Pydantic: niches.py (NicheRead, FeedbackCreate/Read, NicheEntityExtractResponse)
 │   │   ├── services/         # Бизнес-логика (см. ниже)
 │   │   └── workers/          # tasks.py — Celery-пайплайн
 │   ├── ml/                   # ML-обучение и артефакты
 │   │   ├── train_classifier.py  # Fine-tune RuBERT (pain/not-pain), F1
 │   │   ├── embeddings.py     # 768-d эмбеддинги, mean pooling
-│   │   ├── build_demo_dataset.py
-│   │   └── data/train.jsonl, artifacts/
+│   │   ├── build_demo_dataset.py, smoke_embeddings.py, check_artifact_metrics.py
+│   │   ├── data/train.jsonl  # Обучающий датасет (в git)
+│   │   └── artifacts/rubert-pain-cls/  # Чекпоинт fine-tune (НЕ в git, см. .gitignore) — модель + tokenizer + all_results.json
 │   ├── celery_app.py         # Celery + beat-расписание (реальные таски)
-│   ├── scripts/migrate_drop_users.sql  # Миграция из DaaS-режима (drop users/api_keys)
+│   ├── scripts/migrate_drop_users.sql  # Миграция из DaaS-режима (drop users/api_keys, idempotent)
 │   ├── Dockerfile, Dockerfile.ml
-│   └── pyproject.toml        # Зависимости
-├── tests/                    # pytest: api_token, niches, ML, pipeline, wordstat...
-├── docker-compose.yml        # postgres+pgvector, redis, api, worker, beat
+│   └── pyproject.toml        # Зависимости (Python ≥3.11)
+├── tests/                    # pytest (см. «Тесты») + fixtures/{telegram,vc}/
+├── .github/workflows/ci.yml  # CI: ruff check backend tests + pytest (Python 3.12)
+├── docker-compose.yml        # postgres+pgvector (pg15), redis, api, worker, beat
 ├── locustfile.py             # Load-тесты
-├── state/                    # business-brief.md, metrics, revenue/
+├── state/                    # business-brief.md, metrics-business.json, revenue/
 ├── backlog/                  # revenue.yaml, tasks.yaml
 ├── marketing/                # pricing, landing-hero, onboarding-email, cold-outreach
-├── go-to-market/concierge-first/
+├── go-to-market/concierge-first/  # (пусто)
 └── docs/deploy.md
 ```
 
@@ -124,8 +126,9 @@ saas-niche-finder/
 
 ### ML (`backend/ml/`)
 - **Модель:** `DeepPavlov/rubert-base-cased`, бинарная классификация pain/not-pain, эмбеддинги 768-d (mean pooling)
-- **Обучение:** `train_classifier.py` — 3 эпохи, lr 2e-5, F1/accuracy; датасет `data/train.jsonl`
-- **Артефакты:** `artifacts/` — чекпоинт после fine-tune (загружается через `rubert_pain_model_path`)
+- **Обучение:** `train_classifier.py` — 3 эпохи, lr 2e-5, F1/accuracy; датасет `data/train.jsonl` (в git)
+- **Артефакты:** `artifacts/rubert-pain-cls/` — чекпоинт после fine-tune (загружается через `rubert_pain_model_path` из env; `artifacts/` в `.gitignore`, поэтому на CI модель недоступна — сервис работает в fallback-режиме без артефактов). Есть `checkpoint-{30,60,90}` + `all_results.json` с метриками
+- Вспомогательные скрипты: `smoke_embeddings.py` (быстрый прогон), `check_artifact_metrics.py` (метрики чекпоинта)
 
 ### Инфраструктура
 - **PostgreSQL + pgvector** — основное хранилище, векторный поиск
@@ -138,15 +141,17 @@ saas-niche-finder/
 
 | Метод | Путь | Описание |
 |-------|------|----------|
-| GET | `/v1/niches/top` | Топ-ниши по скору |
-| GET | `/v1/niches/search` | Полнотекстовый / семантический поиск |
+| GET | `/v1/niches/top` | Топ-ниши по `overall_score` (пагинация, фильтр category) |
+| GET | `/v1/niches/search` | Поиск: ILIKE по niche_name/summary_ru или семантический (`query_embed=true`, pgvector cosine) |
+| GET | `/v1/niches/export` | Экспорт CSV / JSONL (включая эмбеддинги; объявлен ДО `{niche_id}`) |
 | GET | `/v1/niches/{id}` | Детали ниши |
-| GET | `/v1/niches/{id}/similar` | Похожие ниши (pgvector) |
-| GET | `/v1/niches/export` | Экспорт CSV / JSONL |
+| GET | `/v1/niches/{id}/similar` | Похожие ниши (pgvector cosine, `limit` ≤20) |
 | GET | `/internal/niches/*` | Упрощённые топ/поиск/детали/similar |
-| POST | `/internal/feedback` | Оценка ниши |
-| GET | `/internal/niches/{id}/entities` | Сущности (Natasha) |
+| POST | `/internal/feedback` | Оценка ниши (`rating` 1–5, без user_id) |
+| GET | `/internal/niches/{id}/entities` | Сущности (Natasha NER) |
 | GET | `/health`, `/ready` | Healthcheck / готовность БД |
+
+Все `/v1` и `/internal` эндпоинты защищены `verify_api_token` (`X-Api-Token` или `Authorization: Bearer`).
 
 ---
 
@@ -161,15 +166,17 @@ saas-niche-finder/
 
 ## Тесты
 
-`tests/` — `test_api_token` (auth), `test_niches_api`, `test_health`, `test_ready`, `test_ml_pipeline`, `test_niche_pipeline`, `test_scoring`, `test_telegram_ingest`, `test_vc_parser`, `test_week3_wordstat`, `test_natasha_entities`. Плюс нагрузочные тесты в `locustfile.py`.
+`tests/` — `test_api_token` (auth), `test_v1_routes` (в т.ч. регрессия: export не 422), `test_niches_api`, `test_health`, `test_ready`, `test_ml_pipeline`, `test_niche_pipeline`, `test_scoring`, `test_telegram_ingest`, `test_vc_parser`, `test_week3_wordstat`, `test_natasha_entities`. Фикстуры: `tests/fixtures/{telegram,vc}/`. Плюс нагрузочные тесты в `locustfile.py`.
 
----
+**CI** (`.github/workflows/ci.yml`): Python 3.12, `pip install -e "./backend[dev]"`, `ruff check backend tests`, `pytest` — на push/PR в main/master.
 
 ## Запуск
 
 ```bash
-# Переменные окружения
+# Переменные окружения (из корня репозитория — .env читается относительно CWD)
 cp .env.example .env
+# ВАЖНО: uvicorn запускать ИЗ КОРНЯ (иначе .env не подхватится и API_TOKEN будет default → все запросы 401):
+#   .\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
 
 # База и Redis
 docker compose up -d postgres redis
@@ -177,15 +184,15 @@ docker compose up -d postgres redis
 # Миграция из DaaS-режима (только для существующей БД)
 docker compose exec -T postgres psql -U postgres -d niche_finder < backend/scripts/migrate_drop_users.sql
 
-# API (из backend/)
-pip install -e './backend[dev,ml]'
-uvicorn app.main:app --reload
+# API (из корня)
+pip install -e './backend[dev]'
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload
 
 # Celery
-celery -A celery_app worker --loglevel=info
+celery -A celery_app worker --loglevel=info   # (из backend/; на Windows: cd backend)
 celery -A celery_app beat --loglevel=info
 
-# Или всё сразу
+# Или всё сразу (5 сервисов)
 docker compose up --build
 
 # Тесты и линтер
