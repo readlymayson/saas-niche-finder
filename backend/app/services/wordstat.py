@@ -51,6 +51,38 @@ def wordstat_cache_key(normalized_keywords: list[str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def extract_total_shows(payload: dict[str, Any]) -> int:
+    """Извлечь суммарное число показов из payload отчёта Вордстат.
+
+    Типовая структура (Direct API v5, WORDSTAT_REPORT):
+      {"Reports": [{"ReportData": [{"Shows": 123, "SearchedWith": [...]}, ...]}]}
+    Устойчиво перебирает ReportData и суммирует "Shows" (или "shows").
+    """
+    total = 0
+    reports = payload.get("Reports") or []
+    if not isinstance(reports, list):
+        reports = [payload]
+    for report in reports:
+        if not isinstance(report, dict):
+            continue
+        data = report.get("ReportData") or []
+        if not isinstance(data, list):
+            continue
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            shows = row.get("Shows", row.get("shows"))
+            if isinstance(shows, (int, float)):
+                total += int(shows)
+            # Строки с вложенным "SearchedWith" тоже несут показы — учитываем
+            for sw in row.get("SearchedWith", []) or []:
+                if isinstance(sw, dict):
+                    sw_shows = sw.get("Shows", sw.get("shows"))
+                    if isinstance(sw_shows, (int, float)):
+                        total += int(sw_shows)
+    return total
+
+
 class AsyncRateLimiter:
     def __init__(self, max_per_second: float) -> None:
         self._interval = 1.0 / max_per_second if max_per_second > 0 else 0.0

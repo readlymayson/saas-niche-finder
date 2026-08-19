@@ -17,3 +17,6 @@ repomix.txt
 
 # ML model artifacts — too large for git, use Git LFS or external storage
 backend/ml/artifacts/
+
+# Telegram auth sessions (secrets — never commit)
+backend/sessions/

@@ -98,6 +98,8 @@ saas-niche-finder/
 4. `update_wordstat` → данные Яндекс.Вордстат
 5. `score_niches` → пересчёт скоринга
 
+> `scrape_telegram` использует `TelegramCollector` (`telegram_collector.py`) — берёт уже авторизованную Telethon-сессию из `TELEGRAM_SESSION_PATH` (volume `backend/sessions/` в compose) или `TELEGRAM_SESSION_STRING`, без интерактивного логина. B2B-фильтр — `_is_b2b_relevant` (`tg_parser.py`).
+
 **Beat-расписание** (`backend/celery_app.py`): scrape VC.ru (ежечасно), scrape Telegram (каждые 2 ч), ML-обработка (каждые 15 мин), агрегация ниш (каждые 30 мин), wordstat (каждые 6 ч), пересчёт скоров (ежедневно 03:00).
 
 ### Сервисы (`app/services/`)

@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     telegram_max_messages_per_minute: int = 30
     telegram_channels: str = "@startup_news,@vcru,@habr_com"
     telegram_ingest_limit_per_channel: int = 30
+    telegram_flood_sleep_threshold: int = 60  # Telethon: пауза при flood-wait (сек)
 
     # RuBERT pain classifier (после ml/train_classifier.py)
     rubert_pain_model_path: str = "backend/ml/artifacts/rubert-pain-cls"

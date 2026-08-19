@@ -35,6 +35,16 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/niche_finder
       REDIS_URL: redis://redis:6379/0
       API_TOKEN: ${API_TOKEN:-change-me-please-generate-a-secret-token}
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
+      TELEGRAM_SESSION_PATH: /app/sessions/telegram.session
+      YANDEX_DIRECT_OAUTH_TOKEN: ${YANDEX_DIRECT_OAUTH_TOKEN:-}
+      YANDEX_DIRECT_CLIENT_LOGIN: ${YANDEX_DIRECT_CLIENT_LOGIN:-}
+      YANDEX_GPT_API_KEY: ${YANDEX_GPT_API_KEY:-}
+      YANDEX_GPT_FOLDER_ID: ${YANDEX_GPT_FOLDER_ID:-}
+    volumes:
+      - ./backend/sessions:/app/sessions
     # Внутренний инструмент: порт наружу не публикуем (доступ через docker network)
     ports:
       - "8000:8000"
@@ -49,11 +59,23 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     image: saas-niche-finder-app
-    command: celery -A celery_app worker --loglevel=info
+    # --pool=solo: без prefork-форков (каждый таск создаёт свой event loop,
+    # asyncpg-engine наследуется форком → "Future attached to a different loop")
+    command: celery -A celery_app worker --loglevel=info --pool=solo
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/niche_finder
       REDIS_URL: redis://redis:6379/0
       API_TOKEN: ${API_TOKEN:-change-me-please-generate-a-secret-token}
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
+      TELEGRAM_SESSION_PATH: /app/sessions/telegram.session
+      YANDEX_DIRECT_OAUTH_TOKEN: ${YANDEX_DIRECT_OAUTH_TOKEN:-}
+      YANDEX_DIRECT_CLIENT_LOGIN: ${YANDEX_DIRECT_CLIENT_LOGIN:-}
+      YANDEX_GPT_API_KEY: ${YANDEX_GPT_API_KEY:-}
+      YANDEX_GPT_FOLDER_ID: ${YANDEX_GPT_FOLDER_ID:-}
+    volumes:
+      - ./backend/sessions:/app/sessions
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,6 +92,16 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/niche_finder
       REDIS_URL: redis://redis:6379/0
       API_TOKEN: ${API_TOKEN:-change-me-please-generate-a-secret-token}
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
+      TELEGRAM_SESSION_PATH: /app/sessions/telegram.session
+      YANDEX_DIRECT_OAUTH_TOKEN: ${YANDEX_DIRECT_OAUTH_TOKEN:-}
+      YANDEX_DIRECT_CLIENT_LOGIN: ${YANDEX_DIRECT_CLIENT_LOGIN:-}
+      YANDEX_GPT_API_KEY: ${YANDEX_GPT_API_KEY:-}
+      YANDEX_GPT_FOLDER_ID: ${YANDEX_GPT_FOLDER_ID:-}
+    volumes:
+      - ./backend/sessions:/app/sessions
     depends_on:
       postgres:
         condition: service_healthy

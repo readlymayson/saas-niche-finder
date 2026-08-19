@@ -6,13 +6,16 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Сначала ставим зависимости (кэшируется: повторная сборка не качает torch/CUDA)
 COPY pyproject.toml .
+RUN mkdir -p app && touch app/__init__.py \
+    && pip install --no-cache-dir pip setuptools wheel \
+    && pip install --no-cache-dir .
+
+# Теперь код — перезаписывает минимальный пакет из шага выше
 COPY app ./app
 COPY ml ./ml
 COPY celery_app.py .
-
-RUN pip install --no-cache-dir pip setuptools wheel \
-    && pip install --no-cache-dir .
 
 ENV PYTHONUNBUFFERED=1
 

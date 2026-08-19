@@ -45,7 +45,7 @@ def settings_to_collector_config(settings: Settings) -> TelegramCollectorConfig:
         session_path=path if not settings.telegram_session_string else None,
         session_string=settings.telegram_session_string,
         max_messages_per_minute=settings.telegram_max_messages_per_minute,
-        flood_sleep_threshold=settings.telethon_flood_sleep_threshold,
+        flood_sleep_threshold=settings.telegram_flood_sleep_threshold,
     )
 
 

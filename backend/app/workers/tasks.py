@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import datetime
 
 from celery import shared_task
 from sqlalchemy import select
@@ -134,56 +133,56 @@ def scrape_vcru() -> dict:
 
 @shared_task(name="app.workers.tasks.scrape_telegram", max_retries=3, default_retry_delay=120)
 def scrape_telegram() -> dict:
-    """Scrape Telegram channels and save relevant messages."""
+    """Scrape Telegram channels and save relevant messages.
+
+    Uses TelegramCollector (telegram_collector.py) which respects
+    TELEGRAM_SESSION_PATH / TELEGRAM_SESSION_STRING config, so an already
+    authorized Telethon session can be used without interactive login.
+    """
     from app.config import settings
 
     async def _run() -> dict:
-        from app.services.tg_parser import TelegramParser
+        from app.services.telegram_collector import TelegramCollector
+        from app.services.telegram_ingest import upsert_telegram_message
+        from app.services.tg_parser import _is_b2b_relevant
 
-        parser = TelegramParser(
-            api_id=settings.telegram_api_id,
-            api_hash=settings.telegram_api_hash,
-            phone=settings.telegram_phone,
-        )
+        channels = [c.strip() for c in settings.telegram_channels.split(",") if c.strip()]
+        limit = settings.telegram_ingest_limit_per_channel
         stats = {"messages_fetched": 0, "messages_saved": 0, "errors": 0}
 
+        collector = TelegramCollector.from_settings(settings)
         try:
-            messages = await parser.scrape_all_channels(hours_back=24, limit_per_channel=30)
-            stats["messages_fetched"] = len(messages)
-
             async with async_session_maker() as session:
-                for msg in messages:
-                    existing = await session.execute(
-                        select(RawPost).where(
-                            RawPost.source == "telegram",
-                            RawPost.source_id == msg["source_id"],
-                        )
-                    )
-                    if existing.scalar_one_or_none() is not None:
-                        continue
-
-                    raw = RawPost(
-                        source="telegram",
-                        source_id=msg["source_id"],
-                        title=None,
-                        body_text=msg["text"],
-                        author=msg["author"],
-                        published_at=(
-                            datetime.fromisoformat(msg["published_at"])
-                            if msg.get("published_at") else None
-                        ),
-                        is_processed=False,
-                    )
-                    session.add(raw)
-                    stats["messages_saved"] += 1
-
+                for channel in channels:
+                    try:
+                        async for message in collector.iter_channel_messages(
+                            channel, limit=limit
+                        ):
+                            text = (message.message or "").strip()
+                            if not _is_b2b_relevant(text):
+                                continue
+                            stats["messages_fetched"] += 1
+                            is_new = await upsert_telegram_message(
+                                session,
+                                channel=channel,
+                                message_id=int(message.id),
+                                body_text=text,
+                                title=channel,
+                                extra={
+                                    "channel": channel,
+                                    "message_id": message.id,
+                                    "author": str(message.sender_id) if message.sender_id else None,
+                                    "date": message.date.isoformat() if message.date else None,
+                                },
+                            )
+                            if is_new:
+                                stats["messages_saved"] += 1
+                    except Exception as exc:
+                        logger.warning("Telegram scrape failed for %s: %s", channel, exc)
+                        stats["errors"] += 1
                 await session.commit()
-
-        except Exception as exc:
-            logger.error("Telegram scrape failed: %s", exc)
-            stats["errors"] += 1
         finally:
-            await parser.close()
+            await collector.disconnect()
 
         return stats
 
@@ -397,24 +396,24 @@ def aggregate_niches() -> dict:
 @shared_task(name="app.workers.tasks.update_wordstat", max_retries=2, default_retry_delay=120)
 def update_wordstat() -> dict:
     """Fetch Яндекс.Вордстат data for all niches and update scores."""
-    from app.services.wordstat import WordstatClient
+    from app.services.wordstat import WordstatService, extract_total_shows
 
     async def _run() -> dict:
         stats = {"niches_updated": 0, "errors": 0}
 
-        client = WordstatClient()
-        async with async_session_maker() as session:
-            result = await session.execute(select(NicheIdea))
-            niches = list(result.scalars().all())
+        service = WordstatService()
+        try:
+            async with async_session_maker() as session:
+                result = await session.execute(select(NicheIdea))
+                niches = list(result.scalars().all())
 
-            for niche in niches:
-                try:
-                    # Get keywords from niche name + related terms
-                    keywords = [niche.niche_name]
-                    wordstat = await client.get_keyword_stats(keywords)
+                for niche in niches:
+                    try:
+                        # Get keywords from niche name + related terms
+                        keywords = [niche.niche_name]
+                        wordstat = await service.get_keyword_stats(session, keywords)
 
-                    if wordstat:
-                        total = sum(wordstat.values())
+                        total = extract_total_shows(wordstat.get("payload", {}))
                         niche.wordstat_requests = total
 
                         # Determine trend based on name patterns
@@ -427,11 +426,13 @@ def update_wordstat() -> dict:
 
                         stats["niches_updated"] += 1
 
-                except Exception as exc:
-                    logger.error("Wordstat update failed for niche %s: %s", niche.id, exc)
-                    stats["errors"] += 1
+                    except Exception as exc:
+                        logger.error("Wordstat update failed for niche %s: %s", niche.id, exc)
+                        stats["errors"] += 1
 
-            await session.commit()
+                await session.commit()
+        finally:
+            await service.aclose()
 
         return stats
 

@@ -11,6 +11,7 @@ from app.services.wordstat import (
     WordstatAPIError,
     WordstatClient,
     YandexDirectJsonClient,
+    extract_total_shows,
     normalize_keywords,
     wordstat_cache_key,
 )
@@ -25,6 +26,27 @@ def test_normalize_keywords_dedup_and_cap() -> None:
 
 def test_wordstat_cache_key_stable() -> None:
     assert wordstat_cache_key(["b", "a"]) == wordstat_cache_key(["a", "b"])
+
+
+def test_extract_total_shows_sums_report_data() -> None:
+    payload = {
+        "Reports": [
+            {
+                "ReportData": [
+                    {"Shows": 1000, "SearchedWith": [{"Shows": 50}, {"Shows": 25}]},
+                    {"Shows": 200, "SearchedWith": []},
+                ]
+            },
+            {"ReportData": [{"shows": 75}]},
+        ]
+    }
+    assert extract_total_shows(payload) == 1350
+
+
+def test_extract_total_shows_empty_payload() -> None:
+    assert extract_total_shows({}) == 0
+    assert extract_total_shows({"Reports": None}) == 0
+    assert extract_total_shows({"Reports": [{"ReportData": "nope"}]}) == 0
 
 
 @pytest.mark.asyncio
