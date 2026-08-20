@@ -23,7 +23,7 @@ class _FakeSession:
         self._niches = niches
         self.committed = False
 
-    async def __aenter__(self) -> "_FakeSession":
+    async def __aenter__(self) -> _FakeSession:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -38,12 +38,42 @@ class _FakeSession:
         self.committed = True
 
 
-def _fake_service(total_shows: int) -> MagicMock:
+def _fake_service(
+    total_count: int, trend_for: dict[str, str] | None = None
+) -> MagicMock:
     svc = MagicMock()
+    trend_for = trend_for or {}
+
+    def _dynamics(trend: str) -> list[dict[str, str]]:
+        if trend == "growing":
+            return [
+                {"date": "2026-01-01T00:00:00Z", "count": "100"},
+                {"date": "2026-02-01T00:00:00Z", "count": "110"},
+                {"date": "2026-03-01T00:00:00Z", "count": "300"},
+                {"date": "2026-04-01T00:00:00Z", "count": "400"},
+            ]
+        if trend == "declining":
+            return [
+                {"date": "2026-01-01T00:00:00Z", "count": "500"},
+                {"date": "2026-02-01T00:00:00Z", "count": "480"},
+                {"date": "2026-03-01T00:00:00Z", "count": "100"},
+                {"date": "2026-04-01T00:00:00Z", "count": "80"},
+            ]
+        return [
+            {"date": "2026-01-01T00:00:00Z", "count": "100"},
+            {"date": "2026-02-01T00:00:00Z", "count": "105"},
+            {"date": "2026-03-01T00:00:00Z", "count": "102"},
+            {"date": "2026-04-01T00:00:00Z", "count": "110"},
+        ]
 
     async def _get_keyword_stats(session: Any, keywords: list[str]) -> dict[str, Any]:
+        phrase = keywords[0] if keywords else ""
+        trend = trend_for.get(phrase, "stable")
         payload = {
-            "Reports": [{"ReportData": [{"Shows": total_shows, "SearchedWith": []}]}]
+            "totalCount": str(total_count),
+            "top": [],
+            "associations": [],
+            "dynamics": _dynamics(trend),
         }
         return {"cached": False, "keywords": keywords, "payload": payload}
 
@@ -52,12 +82,16 @@ def _fake_service(total_shows: int) -> MagicMock:
     return svc
 
 
-def _run_with(session: _FakeSession, total_shows: int = 1234) -> dict:
+def _run_with(
+    session: _FakeSession,
+    total_count: int = 1234,
+    trend_for: dict[str, str] | None = None,
+) -> dict:
     with (
         patch("app.services.wordstat.WordstatService") as svc_cls,
         patch("app.workers.tasks.async_session_maker", return_value=session),
     ):
-        svc_cls.return_value = _fake_service(total_shows)
+        svc_cls.return_value = _fake_service(total_count, trend_for)
         return update_wordstat()
 
 
@@ -68,13 +102,17 @@ def test_update_wordstat_sets_requests_and_trend() -> None:
     ]
     session = _FakeSession(niches)
 
-    stats = _run_with(session, total_shows=4321)
+    stats = _run_with(
+        session,
+        total_count=4321,
+        trend_for={"растущий сегмент SaaS": "growing"},
+    )
 
     assert stats["niches_updated"] == 2
     assert stats["errors"] == 0
     assert niches[0].wordstat_requests == 4321
     assert niches[0].wordstat_trend == "stable"
-    # "раст" в названии → growing
+    # Рост в динамике GetDynamics → growing
     assert niches[1].wordstat_trend == "growing"
     assert session.committed
 

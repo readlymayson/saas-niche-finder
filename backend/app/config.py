@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,10 +30,15 @@ class Settings(BaseSettings):
     rubert_pain_model_path: str = "backend/ml/artifacts/rubert-pain-cls"
     embeddings_model_name: str = "DeepPavlov/rubert-base-cased"
 
-    # Яндекс.Директ / Wordstat API
-    yandex_direct_oauth_token: str | None = None
-    yandex_direct_client_login: str | None = None
-    yandex_direct_api_url: str = "https://api.direct.yandex.com/json/v5"
+    # Яндекс Wordstat (Yandex Search API v2, синхронный)
+    # API-ключ сервисного аккаунта (роль search-api.webSearch.user)
+    # или IAM-токен; передаётся в заголовке Authorization.
+    wordstat_api_key: str | None = None
+    wordstat_api_url: str = "https://searchapi.api.cloud.yandex.net/v2/wordstat"
+    # Каталог (folderId). По умолчанию — тот же, что для YandexGPT.
+    wordstat_folder_id: str | None = None
+    wordstat_region: str = "213"  # 213 — Москва и область
+    wordstat_period: str = "PERIOD_MONTHLY"
     wordstat_cache_ttl_days: int = 7
     wordstat_max_rps: float = 5.0
     wordstat_max_keywords_per_report: int = 2000
@@ -42,6 +48,14 @@ class Settings(BaseSettings):
     yandex_gpt_folder_id: str | None = None
     yandex_gpt_api_url: str = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
     yandex_gpt_model_uri: str | None = None  # по умолчанию gpt://{folder}/yandexgpt/latest
+
+    @field_validator("wordstat_api_url", mode="before")
+    @classmethod
+    def _empty_url_to_default(cls, v: object) -> object:
+        """Пустая строка из env (${VAR:-} в compose) не должна перекрывать дефолт."""
+        if v == "":
+            return "https://searchapi.api.cloud.yandex.net/v2/wordstat"
+        return v
 
 
 @lru_cache

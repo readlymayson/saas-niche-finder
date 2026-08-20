@@ -43,7 +43,7 @@ class _FakeSession:
         self.added: list[Any] = []
         self.committed = False
 
-    async def __aenter__(self) -> "_FakeSession":
+    async def __aenter__(self) -> _FakeSession:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:

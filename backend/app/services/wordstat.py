@@ -1,7 +1,12 @@
 """
-Клиент Яндекс.Директ JSON API v5: Вордстат + кэш PostgreSQL (TTL 7 дней).
+Клиент Яндекс Wordstat (Yandex Search API v2, синхронный REST) + кэш PostgreSQL.
 
-Сверьте method/params с актуальной справкой Директа (пример — wordstatreports в ТЗ).
+Методы:
+  - POST /v2/wordstat/topRequests   → GetTop (частотность за последние 30 дней)
+  - POST /v2/wordstat/dynamics      → GetDynamics (динамика по периодам)
+
+Аутентификация: API-ключ сервисного аккаунта (роль search-api.webSearch.user)
+или IAM-токен, заголовок Authorization. Обязателен folderId (каталог).
 """
 
 from __future__ import annotations
@@ -51,36 +56,58 @@ def wordstat_cache_key(normalized_keywords: list[str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def extract_total_shows(payload: dict[str, Any]) -> int:
-    """Извлечь суммарное число показов из payload отчёта Вордстат.
+def parse_total_count(payload: dict[str, Any]) -> int:
+    """Извлечь суммарную частотность из ответа GetTop.
 
-    Типовая структура (Direct API v5, WORDSTAT_REPORT):
-      {"Reports": [{"ReportData": [{"Shows": 123, "SearchedWith": [...]}, ...]}]}
-    Устойчиво перебирает ReportData и суммирует "Shows" (или "shows").
+    Структура (Search API v2):
+      {"totalCount": "123", "results": [{"phrase": "...", "count": "45"}], ...}
+    Возвращает int(totalCount), при отсутствии — 0.
     """
-    total = 0
-    reports = payload.get("Reports") or []
-    if not isinstance(reports, list):
-        reports = [payload]
-    for report in reports:
-        if not isinstance(report, dict):
+    raw = payload.get("totalCount")
+    if raw in (None, ""):
+        return 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse_dynamics_trend(payload: dict[str, Any]) -> str:
+    """Определить тренд по динамике частотности (GetDynamics).
+
+    Читает сырой ответ GetDynamics (`results`) или агрегированный payload
+    сервиса (`dynamics`). Сравниваем среднее последних двух точек с
+    предыдущими: рост > +20% → growing, падение < -20% → declining.
+    """
+    results = payload.get("results")
+    if results is None:
+        results = payload.get("dynamics")
+    counts: list[int] = []
+    for row in results or []:
+        if not isinstance(row, dict):
             continue
-        data = report.get("ReportData") or []
-        if not isinstance(data, list):
+        raw = row.get("count")
+        if raw in (None, ""):
             continue
-        for row in data:
-            if not isinstance(row, dict):
-                continue
-            shows = row.get("Shows", row.get("shows"))
-            if isinstance(shows, (int, float)):
-                total += int(shows)
-            # Строки с вложенным "SearchedWith" тоже несут показы — учитываем
-            for sw in row.get("SearchedWith", []) or []:
-                if isinstance(sw, dict):
-                    sw_shows = sw.get("Shows", sw.get("shows"))
-                    if isinstance(sw_shows, (int, float)):
-                        total += int(sw_shows)
-    return total
+        try:
+            counts.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if len(counts) < 2:
+        return "stable"
+    recent = (counts[-2] + counts[-1]) / 2.0
+    earlier = counts[:-2]
+    if not earlier:
+        return "stable"
+    base = sum(earlier) / len(earlier)
+    if base <= 0:
+        return "stable"
+    change = (recent - base) / base
+    if change > 0.20:
+        return "growing"
+    if change < -0.20:
+        return "declining"
+    return "stable"
 
 
 class AsyncRateLimiter:
@@ -100,8 +127,8 @@ class AsyncRateLimiter:
             self._next_at = time.monotonic() + self._interval
 
 
-class YandexDirectJsonClient:
-    """POST на `.../json/v5/{service}` с Bearer OAuth."""
+class YandexSearchApiClient:
+    """POST на `{base}/{method}` (Search API v2) с Authorization: Api-key / Bearer."""
 
     def __init__(
         self,
@@ -110,7 +137,7 @@ class YandexDirectJsonClient:
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._settings = settings
-        self._base = settings.yandex_direct_api_url.rstrip("/")
+        self._base = settings.wordstat_api_url.rstrip("/")
         self._limiter = AsyncRateLimiter(settings.wordstat_max_rps)
         self._own_client = http_client is None
         self._client = http_client or httpx.AsyncClient(timeout=120.0)
@@ -120,99 +147,114 @@ class YandexDirectJsonClient:
             await self._client.aclose()
 
     def _headers(self) -> dict[str, str]:
-        token = self._settings.yandex_direct_oauth_token
-        if not token:
-            msg = "Задайте YANDEX_DIRECT_OAUTH_TOKEN"
+        key = self._settings.wordstat_api_key
+        if not key:
+            msg = "Задайте WORDSTAT_API_KEY (API-ключ сервисного аккаунта Yandex Search API)"
             raise WordstatAPIError({"error_string": msg})
-        h: dict[str, str] = {
-            "Authorization": f"Bearer {token}",
+        # Search API v2 принимает API-ключ как "Api-key <ключ>",
+        # IAM-токен (JWT t1.../eyJ...) — как "Bearer <токен>".
+        if key.startswith("t1.") or key.startswith("eyJ"):
+            auth = f"Bearer {key}"
+        else:
+            auth = f"Api-key {key}"
+        return {
+            "Authorization": auth,
             "Content-Type": "application/json; charset=UTF-8",
         }
-        if self._settings.yandex_direct_client_login:
-            h["Client-Login"] = self._settings.yandex_direct_client_login
-        return h
 
-    async def call(self, service: str, body: dict[str, Any]) -> dict[str, Any]:
-        url = f"{self._base}/{service.lstrip('/')}"
+    def _folder_id(self) -> str:
+        folder = self._settings.wordstat_folder_id or self._settings.yandex_gpt_folder_id
+        if not folder:
+            msg = "Задайте WORDSTAT_FOLDER_ID (или YANDEX_GPT_FOLDER_ID)"
+            raise WordstatAPIError({"error_string": msg})
+        return folder
+
+    async def call(self, method: str, body: dict[str, Any]) -> dict[str, Any]:
+        url = f"{self._base}/{method.lstrip('/')}"
         await self._limiter.acquire()
         resp = await self._client.post(url, headers=self._headers(), json=body)
         resp.raise_for_status()
         data = resp.json()
+        if not isinstance(data, dict):
+            return {}
         err = data.get("error")
         if err:
             if isinstance(err, dict):
                 raise WordstatAPIError(err)
             raise WordstatAPIError({"error": err})
-        result = data.get("result")
-        return result if isinstance(result, dict) else {}
-
-
-def _pick_report_id(obj: dict[str, Any]) -> str | None:
-    for key in ("ReportId", "reportId", "report_id", "Id"):
-        v = obj.get(key)
-        if v is not None:
-            return str(v)
-    return None
+        return data
 
 
 class WordstatClient:
-    def __init__(self, direct: YandexDirectJsonClient) -> None:
-        self._d = direct
+    """Вызовы Wordstat Search API v2: GetTop и GetDynamics."""
 
-    async def request_wordstat_report(self, keywords: list[str]) -> str:
-        """Запрос отчёта Вордстат: method=get, Keywords, WORDSTAT_REPORT (как в ТЗ)."""
-        body = {
-            "method": "get",
-            "params": {
-                "SelectionCriteria": {"Keywords": keywords},
-                "ReportType": "WORDSTAT_REPORT",
-            },
+    def __init__(self, api: YandexSearchApiClient) -> None:
+        self._api = api
+
+    def _base_body(self) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "regions": [self._api._settings.wordstat_region],
+            "devices": ["DEVICE_ALL"],
+            "folderId": self._api._folder_id(),
         }
-        res = await self._d.call("wordstatreports", body)
-        rid = _pick_report_id(res)
-        if not rid and isinstance(res.get("Reports"), list) and res["Reports"]:
-            rid = _pick_report_id(res["Reports"][0])
-        if not rid:
-            msg = "Не удалось извлечь ReportId из ответа wordstatreports"
-            raise WordstatAPIError({"error_string": msg, "result": res})
-        return rid
+        return body
 
-    async def fetch_report_json(
+    async def get_top(self, phrase: str, *, num_phrases: int = 10) -> dict[str, Any]:
+        """GetTop: частотность фразы за последние 30 дней."""
+        body: dict[str, Any] = {"phrase": phrase, "numPhrases": num_phrases}
+        body.update(self._base_body())
+        return await self._api.call("topRequests", body)
+
+    async def get_dynamics(
         self,
-        report_id: str,
+        phrase: str,
         *,
-        retries: int = 30,
-        delay_sec: float = 2.0,
+        period: str = "PERIOD_MONTHLY",
+        from_date: str | None = None,
+        to_date: str | None = None,
     ) -> dict[str, Any]:
+        """GetDynamics: динамика частотности фразы по периодам.
+
+        По умолчанию — последние 6 месяцев помесячно. Для PERIOD_MONTHLY
+        API требует fromDate = первый день месяца, toDate — последний день
+        месяца (иначе 400 InvalidArgument).
         """
-        Получить готовый отчёт. При отложенной генерации — повторы с паузой.
-        """
-        last_err: Exception | None = None
-        for _ in range(max(1, retries)):
-            body = {"method": "get", "params": {"SelectionCriteria": {"ReportIds": [report_id]}}}
-            try:
-                res = await self._d.call("reports", body)
-                return res
-            except WordstatAPIError as e:
-                last_err = e
-                detail = str(e.payload).lower()
-                if "not ready" in detail or "еще" in detail or "wait" in detail:
-                    await asyncio.sleep(delay_sec)
-                    continue
-                raise
-            except httpx.HTTPStatusError as e:
-                last_err = e
-                if e.response.status_code in (201, 202):
-                    await asyncio.sleep(delay_sec)
-                    continue
-                raise
-        if last_err:
-            raise last_err
-        msg = "Истекло время ожидания отчёта Вордстат"
-        raise TimeoutError(msg)
+        now = datetime.now(UTC)
+        if to_date:
+            to_dt = datetime.fromisoformat(to_date.replace("Z", "+00:00"))
+        else:
+            to_dt = now
+        if from_date:
+            from_dt = datetime.fromisoformat(from_date.replace("Z", "+00:00"))
+        else:
+            from_dt = now - timedelta(days=180)
+
+        if period == "PERIOD_MONTHLY":
+            # fromDate → 1-е число месяца; toDate → последний день месяца
+            from_dt = from_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            if to_dt.month == 12:
+                next_month = to_dt.replace(year=to_dt.year + 1, month=1, day=1)
+            else:
+                next_month = to_dt.replace(month=to_dt.month + 1, day=1)
+            last_day = next_month - timedelta(days=1)
+            to_dt = last_day.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            from_dt = from_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            to_dt = to_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        body: dict[str, Any] = {
+            "phrase": phrase,
+            "period": period,
+            "fromDate": from_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "toDate": to_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        body.update(self._base_body())
+        return await self._api.call("dynamics", body)
 
 
 class WordstatService:
+    """Сервис: GetTop (объём) + GetDynamics (тренд) с кэшем в PostgreSQL."""
+
     def __init__(
         self,
         settings: Settings | None = None,
@@ -220,11 +262,11 @@ class WordstatService:
         client: WordstatClient | None = None,
     ) -> None:
         self._settings = settings or get_settings()
-        self._direct = YandexDirectJsonClient(self._settings)
-        self._client = client or WordstatClient(self._direct)
+        self._api = YandexSearchApiClient(self._settings)
+        self._client = client or WordstatClient(self._api)
 
     async def aclose(self) -> None:
-        await self._direct.aclose()
+        await self._api.aclose()
 
     async def get_keyword_stats(
         self,
@@ -247,8 +289,17 @@ class WordstatService:
             hit = q.scalar_one_or_none()
             if hit:
                 return {"cached": True, "keywords": hit.keywords, "payload": hit.report_payload}
-        report_id = await self._client.request_wordstat_report(normalized)
-        report_data = await self._client.fetch_report_json(report_id)
+
+        phrase = normalized[0]
+        top = await self._client.get_top(phrase)
+        dynamics = await self._client.get_dynamics(phrase)
+
+        report_data = {
+            "totalCount": top.get("totalCount"),
+            "top": top.get("results") or [],
+            "associations": top.get("associations") or [],
+            "dynamics": dynamics.get("results") or [],
+        }
         ttl_days = self._settings.wordstat_cache_ttl_days
         expires = now + timedelta(days=ttl_days)
 
@@ -274,5 +325,5 @@ class WordstatService:
             "cached": False,
             "keywords": normalized,
             "payload": report_data,
-            "report_id": report_id,
+            "totalCount": top.get("totalCount"),
         }

@@ -107,7 +107,7 @@ saas-niche-finder/
 |---|---|
 | `vc_parser.py` / `vc_ingest.py` | Парсинг VC.ru (RSS + HTML, aiohttp + BeautifulSoup, троттлинг 1.5–2.5 с) |
 | `tg_parser.py` / `telegram_ingest.py` / `telegram_collector.py` | Парсинг Telegram (Telethon) |
-| `wordstat.py` | Клиент Яндекс.Вордстат / Direct API v5, кэш 7 дней в БД, лимиты 5 RPS |
+| `wordstat.py` | Клиент Яндекс.Вордстат (Search API v2: GetTop + GetDynamics), кэш 7 дней в БД, лимиты 5 RPS |
 | `yandex_gpt.py` | YandexGPT — генерация карточки ниши |
 | `niche_draft.py` | Сборка черновика: Вордстат + YandexGPT |
 | `niche_pipeline.py` | Оркестрация ниши: энричмент поста → NicheIdea → скоринг |

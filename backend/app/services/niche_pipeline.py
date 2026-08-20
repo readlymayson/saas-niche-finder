@@ -27,7 +27,7 @@ def _keyword_from_post(post: RawPost) -> str:
 
 
 def _yandex_integrations_enabled(cfg: Settings) -> bool:
-    return bool(cfg.yandex_direct_oauth_token and cfg.yandex_gpt_api_key)
+    return bool(cfg.wordstat_api_key and cfg.yandex_gpt_api_key)
 
 
 def _wordstat_snapshot_from_draft(draft: dict[str, Any]) -> dict[str, Any]:

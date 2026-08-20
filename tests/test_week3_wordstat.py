@@ -10,9 +10,10 @@ from app.services.wordstat import (
     AsyncRateLimiter,
     WordstatAPIError,
     WordstatClient,
-    YandexDirectJsonClient,
-    extract_total_shows,
+    YandexSearchApiClient,
     normalize_keywords,
+    parse_dynamics_trend,
+    parse_total_count,
     wordstat_cache_key,
 )
 
@@ -28,25 +29,50 @@ def test_wordstat_cache_key_stable() -> None:
     assert wordstat_cache_key(["b", "a"]) == wordstat_cache_key(["a", "b"])
 
 
-def test_extract_total_shows_sums_report_data() -> None:
+def test_empty_wordstat_api_url_falls_back_to_default() -> None:
+    # ${VAR:-} в compose даёт пустую строку — она не должна ломать URL
+    settings = Settings(wordstat_api_url="")
+    assert settings.wordstat_api_url == "https://searchapi.api.cloud.yandex.net/v2/wordstat"
+    settings2 = Settings(wordstat_api_url="https://example.com/v2/wordstat")
+    assert settings2.wordstat_api_url == "https://example.com/v2/wordstat"
+
+
+def test_parse_total_count_variants() -> None:
+    assert parse_total_count({"totalCount": "12345"}) == 12345
+    assert parse_total_count({"totalCount": 999}) == 999
+    assert parse_total_count({}) == 0
+    assert parse_total_count({"totalCount": None}) == 0
+    assert parse_total_count({"totalCount": "abc"}) == 0
+
+
+def test_parse_dynamics_trend_growing() -> None:
     payload = {
-        "Reports": [
-            {
-                "ReportData": [
-                    {"Shows": 1000, "SearchedWith": [{"Shows": 50}, {"Shows": 25}]},
-                    {"Shows": 200, "SearchedWith": []},
-                ]
-            },
-            {"ReportData": [{"shows": 75}]},
+        "results": [
+            {"date": "2026-01-01T00:00:00Z", "count": "100"},
+            {"date": "2026-02-01T00:00:00Z", "count": "110"},
+            {"date": "2026-03-01T00:00:00Z", "count": "300"},
+            {"date": "2026-04-01T00:00:00Z", "count": "400"},
         ]
     }
-    assert extract_total_shows(payload) == 1350
+    assert parse_dynamics_trend(payload) == "growing"
 
 
-def test_extract_total_shows_empty_payload() -> None:
-    assert extract_total_shows({}) == 0
-    assert extract_total_shows({"Reports": None}) == 0
-    assert extract_total_shows({"Reports": [{"ReportData": "nope"}]}) == 0
+def test_parse_dynamics_trend_declining() -> None:
+    payload = {
+        "results": [
+            {"date": "2026-01-01T00:00:00Z", "count": "500"},
+            {"date": "2026-02-01T00:00:00Z", "count": "480"},
+            {"date": "2026-03-01T00:00:00Z", "count": "100"},
+            {"date": "2026-04-01T00:00:00Z", "count": "80"},
+        ]
+    }
+    assert parse_dynamics_trend(payload) == "declining"
+
+
+def test_parse_dynamics_trend_stable_and_short() -> None:
+    assert parse_dynamics_trend({"results": [{"count": "10"}, {"count": "11"}]}) == "stable"
+    assert parse_dynamics_trend({"results": []}) == "stable"
+    assert parse_dynamics_trend({}) == "stable"
 
 
 @pytest.mark.asyncio
@@ -65,36 +91,41 @@ async def test_rate_limiter_spacing(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_yandex_direct_missing_token() -> None:
+async def test_yandex_search_api_missing_key() -> None:
     settings = Settings()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))) as http:
-        client = YandexDirectJsonClient(settings, http_client=http)
+    transport = httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = YandexSearchApiClient(settings, http_client=http)
         try:
             with pytest.raises(WordstatAPIError):
-                await client.call("reports", {})
+                await client.call("topRequests", {})
         finally:
             await client.aclose()
 
 
 @pytest.mark.asyncio
-async def test_wordstat_client_report_roundtrip() -> None:
+async def test_wordstat_client_top_and_dynamics_roundtrip() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        if str(request.url).rstrip("/").endswith("wordstatreports"):
-            return httpx.Response(200, json={"result": {"ReportId": 42}})
-        if str(request.url).rstrip("/").endswith("reports"):
-            return httpx.Response(200, json={"result": {"status": "done"}})
+        assert request.headers.get("Authorization", "").startswith("Api-key")
+        if str(request.url).endswith("topRequests"):
+            return httpx.Response(200, json={"totalCount": "42", "results": []})
+        if str(request.url).endswith("dynamics"):
+            return httpx.Response(200, json={"results": [{"count": "5"}, {"count": "7"}]})
         return httpx.Response(404, text="not found")
 
-    settings = Settings(yandex_direct_oauth_token="test-token")
+    settings = Settings(
+        wordstat_api_key="test-key",
+        yandex_gpt_folder_id="b1gXXXX",
+    )
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as http:
-        direct = YandexDirectJsonClient(settings, http_client=http)
-        wc = WordstatClient(direct)
-        rid = await wc.request_wordstat_report(["софт для такси"])
-        assert rid == "42"
-        data = await wc.fetch_report_json(rid, retries=1)
-        assert data.get("status") == "done"
-        await direct.aclose()
+        api = YandexSearchApiClient(settings, http_client=http)
+        wc = WordstatClient(api)
+        top = await wc.get_top("софт для такси")
+        assert top.get("totalCount") == "42"
+        dyn = await wc.get_dynamics("софт для такси")
+        assert len(dyn.get("results")) == 2
+        await api.aclose()
 
 
 @pytest.mark.asyncio

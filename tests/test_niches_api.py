@@ -24,8 +24,14 @@ class _FakeDb:
         _ = args, kwargs
         return _FakeResult(
             [
-                NicheIdea(id=1, slug="crm-ru", title="CRM для SMB", summary="Учет лидов", score=7.2),
-                NicheIdea(id=2, slug="hr-ats", title="ATS для рекрутинга", summary="Подбор", score=5.5),
+                NicheIdea(
+                    id=1, slug="crm-ru", title="CRM для SMB",
+                    summary="Учет лидов", score=7.2,
+                ),
+                NicheIdea(
+                    id=2, slug="hr-ats", title="ATS для рекрутинга",
+                    summary="Подбор", score=5.5,
+                ),
             ]
         )
 

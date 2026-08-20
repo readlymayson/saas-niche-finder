@@ -395,8 +395,8 @@ def aggregate_niches() -> dict:
 
 @shared_task(name="app.workers.tasks.update_wordstat", max_retries=2, default_retry_delay=120)
 def update_wordstat() -> dict:
-    """Fetch Яндекс.Вордстат data for all niches and update scores."""
-    from app.services.wordstat import WordstatService, extract_total_shows
+    """Fetch Яндекс.Вордстат (Search API v2: GetTop + GetDynamics) for all niches."""
+    from app.services.wordstat import WordstatService, parse_dynamics_trend, parse_total_count
 
     async def _run() -> dict:
         stats = {"niches_updated": 0, "errors": 0}
@@ -409,20 +409,17 @@ def update_wordstat() -> dict:
 
                 for niche in niches:
                     try:
-                        # Get keywords from niche name + related terms
+                        # Get keywords from niche name
                         keywords = [niche.niche_name]
                         wordstat = await service.get_keyword_stats(session, keywords)
 
-                        total = extract_total_shows(wordstat.get("payload", {}))
+                        total = parse_total_count(wordstat.get("payload", {}))
                         niche.wordstat_requests = total
 
-                        # Determine trend based on name patterns
-                        if "раст" in niche.niche_name.lower():
-                            niche.wordstat_trend = "growing"
-                        elif "пад" in niche.niche_name.lower():
-                            niche.wordstat_trend = "declining"
-                        else:
-                            niche.wordstat_trend = "stable"
+                        # Trend from GetDynamics
+                        niche.wordstat_trend = parse_dynamics_trend(
+                            wordstat.get("payload", {})
+                        )
 
                         stats["niches_updated"] += 1
 

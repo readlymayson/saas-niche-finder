@@ -43,7 +43,7 @@ class _FakeSession:
         self.added: list = []
         self._pain_posts: list[RawPost] = []
 
-    async def __aenter__(self) -> "_FakeSession":
+    async def __aenter__(self) -> _FakeSession:
         return self
 
     async def __aexit__(self, *exc_info) -> None:  # noqa: ANN002, D105
