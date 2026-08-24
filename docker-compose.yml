@@ -46,6 +46,7 @@ services:
       WORDSTAT_FOLDER_ID: ${WORDSTAT_FOLDER_ID:-}
       WORDSTAT_REGION: ${WORDSTAT_REGION:-}
       WORDSTAT_PERIOD: ${WORDSTAT_PERIOD:-}
+      WORDSTAT_TREND_DAYS: ${WORDSTAT_TREND_DAYS:-}
     volumes:
       - ./backend/sessions:/app/sessions
     # Внутренний инструмент: порт наружу не публикуем (доступ через docker network)
@@ -80,6 +81,7 @@ services:
       WORDSTAT_FOLDER_ID: ${WORDSTAT_FOLDER_ID:-}
       WORDSTAT_REGION: ${WORDSTAT_REGION:-}
       WORDSTAT_PERIOD: ${WORDSTAT_PERIOD:-}
+      WORDSTAT_TREND_DAYS: ${WORDSTAT_TREND_DAYS:-}
     volumes:
       - ./backend/sessions:/app/sessions
     depends_on:
@@ -109,6 +111,7 @@ services:
       WORDSTAT_FOLDER_ID: ${WORDSTAT_FOLDER_ID:-}
       WORDSTAT_REGION: ${WORDSTAT_REGION:-}
       WORDSTAT_PERIOD: ${WORDSTAT_PERIOD:-}
+      WORDSTAT_TREND_DAYS: ${WORDSTAT_TREND_DAYS:-}
     volumes:
       - ./backend/sessions:/app/sessions
     depends_on:

@@ -37,6 +37,14 @@ def test_empty_wordstat_api_url_falls_back_to_default() -> None:
     assert settings2.wordstat_api_url == "https://example.com/v2/wordstat"
 
 
+def test_empty_wordstat_trend_days_falls_back_to_default() -> None:
+    # ${VAR:-} в compose даёт пустую строку — она не должна ломать int
+    settings = Settings(wordstat_trend_days="")
+    assert settings.wordstat_trend_days == 400
+    settings2 = Settings(wordstat_trend_days=180)
+    assert settings2.wordstat_trend_days == 180
+
+
 def test_parse_total_count_variants() -> None:
     assert parse_total_count({"totalCount": "12345"}) == 12345
     assert parse_total_count({"totalCount": 999}) == 999
@@ -69,10 +77,82 @@ def test_parse_dynamics_trend_declining() -> None:
     assert parse_dynamics_trend(payload) == "declining"
 
 
+def test_parse_dynamics_trend_yoy_growing() -> None:
+    """Сезонность: тот же месяц год назад выше/ниже — сравниваем YoY."""
+    payload = {"results": [
+        {"date": "2025-08-01T00:00:00Z", "count": "100"},
+        {"date": "2025-09-01T00:00:00Z", "count": "105"},
+        {"date": "2025-10-01T00:00:00Z", "count": "110"},
+        {"date": "2025-11-01T00:00:00Z", "count": "115"},
+        {"date": "2025-12-01T00:00:00Z", "count": "120"},
+        {"date": "2026-01-01T00:00:00Z", "count": "125"},
+        {"date": "2026-02-01T00:00:00Z", "count": "130"},
+        {"date": "2026-03-01T00:00:00Z", "count": "135"},
+        {"date": "2026-04-01T00:00:00Z", "count": "140"},
+        {"date": "2026-05-01T00:00:00Z", "count": "145"},
+        {"date": "2026-06-01T00:00:00Z", "count": "150"},
+        {"date": "2026-07-01T00:00:00Z", "count": "155"},
+        {"date": "2026-08-01T00:00:00Z", "count": "200"},  # vs 2025-08: +100%
+    ]}
+    assert parse_dynamics_trend(payload) == "growing"
+
+
+def test_parse_dynamics_trend_yoy_declining() -> None:
+    payload = {"results": [
+        {"date": "2025-08-01T00:00:00Z", "count": "400"},
+        {"date": "2025-09-01T00:00:00Z", "count": "390"},
+        {"date": "2025-10-01T00:00:00Z", "count": "380"},
+        {"date": "2025-11-01T00:00:00Z", "count": "370"},
+        {"date": "2025-12-01T00:00:00Z", "count": "360"},
+        {"date": "2026-01-01T00:00:00Z", "count": "350"},
+        {"date": "2026-02-01T00:00:00Z", "count": "340"},
+        {"date": "2026-03-01T00:00:00Z", "count": "330"},
+        {"date": "2026-04-01T00:00:00Z", "count": "320"},
+        {"date": "2026-05-01T00:00:00Z", "count": "310"},
+        {"date": "2026-06-01T00:00:00Z", "count": "300"},
+        {"date": "2026-07-01T00:00:00Z", "count": "290"},
+        {"date": "2026-08-01T00:00:00Z", "count": "100"},  # vs 2025-08: -75%
+    ]}
+    assert parse_dynamics_trend(payload) == "declining"
+
+
+def test_parse_dynamics_trend_yoy_stable() -> None:
+    """YoY-стабильно: 2026-08 = 2025-08 (±5%) → stable, несмотря на всплески."""
+    payload = {"results": [
+        {"date": "2025-08-01T00:00:00Z", "count": "200"},
+        {"date": "2025-09-01T00:00:00Z", "count": "190"},
+        {"date": "2025-10-01T00:00:00Z", "count": "300"},
+        {"date": "2025-11-01T00:00:00Z", "count": "180"},
+        {"date": "2025-12-01T00:00:00Z", "count": "310"},
+        {"date": "2026-01-01T00:00:00Z", "count": "170"},
+        {"date": "2026-02-01T00:00:00Z", "count": "320"},
+        {"date": "2026-03-01T00:00:00Z", "count": "160"},
+        {"date": "2026-04-01T00:00:00Z", "count": "330"},
+        {"date": "2026-05-01T00:00:00Z", "count": "150"},
+        {"date": "2026-06-01T00:00:00Z", "count": "340"},
+        {"date": "2026-07-01T00:00:00Z", "count": "140"},
+        {"date": "2026-08-01T00:00:00Z", "count": "210"},  # vs 2025-08: +5%
+    ]}
+    assert parse_dynamics_trend(payload) == "stable"
+
+
 def test_parse_dynamics_trend_stable_and_short() -> None:
     assert parse_dynamics_trend({"results": [{"count": "10"}, {"count": "11"}]}) == "stable"
     assert parse_dynamics_trend({"results": []}) == "stable"
     assert parse_dynamics_trend({}) == "stable"
+
+
+def test_parse_dynamics_trend_dynamics_key_alias() -> None:
+    """Агрегированный payload сервиса хранит динамику под ключом `dynamics`."""
+    payload = {
+        "dynamics": [
+            {"date": "2026-01-01T00:00:00Z", "count": "100"},
+            {"date": "2026-02-01T00:00:00Z", "count": "110"},
+            {"date": "2026-03-01T00:00:00Z", "count": "300"},
+            {"date": "2026-04-01T00:00:00Z", "count": "400"},
+        ]
+    }
+    assert parse_dynamics_trend(payload) == "growing"
 
 
 @pytest.mark.asyncio
@@ -92,7 +172,8 @@ async def test_rate_limiter_spacing(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_yandex_search_api_missing_key() -> None:
-    settings = Settings()
+    # Явно без ключа, чтобы тест не зависел от .env
+    settings = Settings(wordstat_api_key=None, wordstat_folder_id=None)
     transport = httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     async with httpx.AsyncClient(transport=transport) as http:
         client = YandexSearchApiClient(settings, http_client=http)

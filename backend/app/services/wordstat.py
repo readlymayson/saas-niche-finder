@@ -76,13 +76,20 @@ def parse_dynamics_trend(payload: dict[str, Any]) -> str:
     """Определить тренд по динамике частотности (GetDynamics).
 
     Читает сырой ответ GetDynamics (`results`) или агрегированный payload
-    сервиса (`dynamics`). Сравниваем среднее последних двух точек с
-    предыдущими: рост > +20% → growing, падение < -20% → declining.
+    сервиса (`dynamics`). Точки отсортированы по дате (клиент возвращает
+    хронологический порядок).
+
+    Стратегия (устойчивая к сезонности):
+      1. Если есть 12+ месячных точек — сравниваем последний месяц с тем же
+         месяцем год назад (YoY, +-15% → growing/declining).
+      2. Иначе — последнюю точку со средней предыдущих (похожий на старую
+         логику порог, +-20%).
+      3. Недостаточно данных (< 2 точек) → stable.
     """
     results = payload.get("results")
     if results is None:
         results = payload.get("dynamics")
-    counts: list[int] = []
+    points: list[tuple[str, int]] = []
     for row in results or []:
         if not isinstance(row, dict):
             continue
@@ -90,24 +97,41 @@ def parse_dynamics_trend(payload: dict[str, Any]) -> str:
         if raw in (None, ""):
             continue
         try:
-            counts.append(int(raw))
+            points.append((row.get("date", ""), int(raw)))
         except (TypeError, ValueError):
             continue
-    if len(counts) < 2:
+    if len(points) < 2:
         return "stable"
-    recent = (counts[-2] + counts[-1]) / 2.0
-    earlier = counts[:-2]
-    if not earlier:
+
+    def _by_change(change: float, threshold: float) -> str:
+        if change > threshold:
+            return "growing"
+        if change < -threshold:
+            return "declining"
         return "stable"
+
+    # 1. YoY: последняя месячная точка vs тот же месяц год назад
+    last_date = points[-1][0]
+    if len(points) >= 12 and len(last_date) >= 10:
+        try:
+            last_month = last_date[:7]  # "YYYY-MM"
+            last_val = points[-1][1]
+            year_before = str(int(last_month[:4]) - 1) + last_month[4:]
+            for date, val in points:
+                if date[:7] == year_before:
+                    if val <= 0:
+                        return "stable"
+                    return _by_change((last_val - val) / val, 0.15)
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Fallback: последняя точка vs средняя предыдущих
+    recent = points[-1][1]
+    earlier = [v for _, v in points[:-1]]
     base = sum(earlier) / len(earlier)
     if base <= 0:
         return "stable"
-    change = (recent - base) / base
-    if change > 0.20:
-        return "growing"
-    if change < -0.20:
-        return "declining"
-    return "stable"
+    return _by_change((recent - base) / base, 0.20)
 
 
 class AsyncRateLimiter:
@@ -215,7 +239,8 @@ class WordstatClient:
     ) -> dict[str, Any]:
         """GetDynamics: динамика частотности фразы по периодам.
 
-        По умолчанию — последние 6 месяцев помесячно. Для PERIOD_MONTHLY
+        По умолчанию — окно из wordstat_trend_days (365 дней, чтобы покрыть
+        тот же месяц год назад для YoY-тренда) помесячно. Для PERIOD_MONTHLY
         API требует fromDate = первый день месяца, toDate — последний день
         месяца (иначе 400 InvalidArgument).
         """
@@ -227,7 +252,7 @@ class WordstatClient:
         if from_date:
             from_dt = datetime.fromisoformat(from_date.replace("Z", "+00:00"))
         else:
-            from_dt = now - timedelta(days=180)
+            from_dt = now - timedelta(days=self._api._settings.wordstat_trend_days)
 
         if period == "PERIOD_MONTHLY":
             # fromDate → 1-е число месяца; toDate → последний день месяца

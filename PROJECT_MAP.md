@@ -60,7 +60,7 @@ saas-niche-finder/
 │   │   ├── api/
 │   │   │   ├── v1.py         # /v1: top, search (ILIKE + query_embed pgvector), export (CSV/JSONL), detail, similar
 │   │   │   └── niches.py     # /internal: top, search, detail, similar, feedback, entities
-│   │   ├── db/               # base.py, session.py (async), vector.py (pgvector cosine)
+│   │   ├── db/               # base.py, session.py (async, NullPool — для Celery solo), vector.py (pgvector cosine)
 │   │   ├── ml/               # service.py — RuBERT pain-классификация + эмбеддинги 768-d
 │   │   ├── models/           # SQLAlchemy: niche_idea, raw_post, feedback, wordstat_cache
 │   │   ├── schemas/          # Pydantic: niches.py (NicheRead, FeedbackCreate/Read, NicheEntityExtractResponse)
@@ -74,11 +74,12 @@ saas-niche-finder/
 │   │   └── artifacts/rubert-pain-cls/  # Чекпоинт fine-tune (НЕ в git, см. .gitignore) — модель + tokenizer + all_results.json
 │   ├── celery_app.py         # Celery + beat-расписание (реальные таски)
 │   ├── scripts/migrate_drop_users.sql  # Миграция из DaaS-режима (drop users/api_keys, idempotent)
+│   ├── sessions/             # Telethon-сессии (volume в compose; НЕ в git, секреты)
 │   ├── Dockerfile, Dockerfile.ml
 │   └── pyproject.toml        # Зависимости (Python ≥3.11)
 ├── tests/                    # pytest (см. «Тесты») + fixtures/{telegram,vc}/
 ├── .github/workflows/ci.yml  # CI: ruff check backend tests + pytest (Python 3.12)
-├── docker-compose.yml        # postgres+pgvector (pg15), redis, api, worker, beat
+├── docker-compose.yml        # postgres+pgvector (pg15), redis, api, worker (--pool=solo), beat
 ├── locustfile.py             # Load-тесты
 ├── state/                    # business-brief.md, metrics-business.json, revenue/
 ├── backlog/                  # revenue.yaml, tasks.yaml
@@ -95,7 +96,7 @@ saas-niche-finder/
 1. `scrape_vcru` / `scrape_telegram` → сохранение `RawPost`
 2. `process_raw_posts` → ML-классификация боли + эмбеддинги
 3. `aggregate_niches` → сборка `NicheIdea`
-4. `update_wordstat` → данные Яндекс.Вордстат
+4. `update_wordstat` → Яндекс.Вордстат (Search API v2: GetTop — частотность, GetDynamics — динамика для тренда)
 5. `score_niches` → пересчёт скоринга
 
 > `scrape_telegram` использует `TelegramCollector` (`telegram_collector.py`) — берёт уже авторизованную Telethon-сессию из `TELEGRAM_SESSION_PATH` (volume `backend/sessions/` в compose) или `TELEGRAM_SESSION_STRING`, без интерактивного логина. B2B-фильтр — `_is_b2b_relevant` (`tg_parser.py`).
@@ -107,7 +108,7 @@ saas-niche-finder/
 |---|---|
 | `vc_parser.py` / `vc_ingest.py` | Парсинг VC.ru (RSS + HTML, aiohttp + BeautifulSoup, троттлинг 1.5–2.5 с) |
 | `tg_parser.py` / `telegram_ingest.py` / `telegram_collector.py` | Парсинг Telegram (Telethon) |
-| `wordstat.py` | Клиент Яндекс.Вордстат (Search API v2: GetTop + GetDynamics), кэш 7 дней в БД, лимиты 5 RPS |
+| `wordstat.py` | Клиент Яндекс.Вордстат (Search API v2: GetTop + GetDynamics), кэш 7 дней в БД, лимиты 5 RPS, тренд: YoY (месяц vs год назад, ±15%) при ≥12 точках, иначе fallback (последняя точка vs средняя предыдущих, ±20%); окно динамики `wordstat_trend_days` (400 дней) |
 | `yandex_gpt.py` | YandexGPT — генерация карточки ниши |
 | `niche_draft.py` | Сборка черновика: Вордстат + YandexGPT |
 | `niche_pipeline.py` | Оркестрация ниши: энричмент поста → NicheIdea → скоринг |
@@ -121,7 +122,7 @@ saas-niche-finder/
 - Сравнение через `hmac.compare_digest` (constant-time), без БД
 
 ### Модели (`app/models/`)
-- `niche_idea.py` — `NicheIdea`: slug, title, summary, score + DaaS-поля (niche_name, category, overall_score, wordstat_*, pain_points_json, competitors_json), эмбеддинг `VectorType(768)`
+- `niche_idea.py` — `NicheIdea`: slug, title, summary, score + DaaS-поля (niche_name, category, overall_score, wordstat_requests, wordstat_trend, pain_points_json, competitors_json), эмбеддинг `VectorType(768)`
 - `raw_post.py` — `RawPost`: source, external_id, title, body_text, ML-поля (is_processed, is_pain_point, pain_probability, embedding)
 - `feedback.py` — оценка ниши (без user_id)
 - `wordstat_cache.py` — кэш ответов Вордстата
@@ -135,7 +136,8 @@ saas-niche-finder/
 ### Инфраструктура
 - **PostgreSQL + pgvector** — основное хранилище, векторный поиск
 - **Redis** — Celery broker/backend
-- **Docker Compose** — 5 сервисов: `postgres`, `redis`, `api`, `worker`, `beat`
+- **SQLAlchemy async + NullPool** — каждый Celery-таск создаёт свой event loop (`_run_async`), NullPool не даёт «Future attached to a different loop»
+- **Docker Compose** — 5 сервисов: `postgres`, `redis`, `api`, `worker` (`--pool=solo`), `beat`; volume `backend/sessions/` → `/app/sessions` для Telethon-сессии
 
 ---
 
@@ -143,7 +145,7 @@ saas-niche-finder/
 
 | Метод | Путь | Описание |
 |-------|------|----------|
-| GET | `/v1/niches/top` | Топ-ниши по `overall_score` (пагинация, фильтр category) |
+| GET | `/v1/niches/top` | Топ-ниши по `overall_score` (пагинация, фильтр category); ответ: `wordstat_requests`, `wordstat_trend` на верхнем уровне + `metrics` |
 | GET | `/v1/niches/search` | Поиск: ILIKE по niche_name/summary_ru или семантический (`query_embed=true`, pgvector cosine) |
 | GET | `/v1/niches/export` | Экспорт CSV / JSONL (включая эмбеддинги; объявлен ДО `{niche_id}`) |
 | GET | `/v1/niches/{id}` | Детали ниши |
@@ -168,7 +170,7 @@ saas-niche-finder/
 
 ## Тесты
 
-`tests/` — `test_api_token` (auth), `test_v1_routes` (в т.ч. регрессия: export не 422), `test_niches_api`, `test_health`, `test_ready`, `test_ml_pipeline`, `test_niche_pipeline`, `test_scoring`, `test_telegram_ingest`, `test_vc_parser`, `test_week3_wordstat`, `test_natasha_entities`. Фикстуры: `tests/fixtures/{telegram,vc}/`. Плюс нагрузочные тесты в `locustfile.py`.
+`tests/` — `test_api_token` (auth), `test_v1_routes` (в т.ч. регрессия: export не 422), `test_niches_api`, `test_health`, `test_ready`, `test_ml_pipeline`, `test_niche_pipeline`, `test_scoring`, `test_telegram_ingest`, `test_vc_parser`, `test_week3_wordstat` (GetTop/GetDynamics + YoY-тренд), `test_natasha_entities`, `test_scrape_vcru_task`, `test_scrape_telegram_task`, `test_update_wordstat_task`. Фикстуры: `tests/fixtures/{telegram,vc}/`. Плюс нагрузочные тесты в `locustfile.py`.
 
 **CI** (`.github/workflows/ci.yml`): Python 3.12, `pip install -e "./backend[dev]"`, `ruff check backend tests`, `pytest` — на push/PR в main/master.
 
@@ -190,8 +192,8 @@ docker compose exec -T postgres psql -U postgres -d niche_finder < backend/scrip
 pip install -e './backend[dev]'
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload
 
-# Celery
-celery -A celery_app worker --loglevel=info   # (из backend/; на Windows: cd backend)
+# Celery (worker ОБЯЗАТЕЛЬНО с --pool=solo: каждый таск создаёт свой event loop)
+celery -A celery_app worker --loglevel=info --pool=solo   # (из backend/; на Windows: cd backend)
 celery -A celery_app beat --loglevel=info
 
 # Или всё сразу (5 сервисов)

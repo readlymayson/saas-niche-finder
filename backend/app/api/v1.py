@@ -70,6 +70,12 @@ class NicheScore(BaseModel):
     category: str = Field(description="Category: saas, marketplace, edtech, fintech, etc.")
     overall_score: float = Field(description="Overall attractiveness score 0.0–100.0")
     confidence: float = Field(description="AI confidence score 0.0–1.0")
+    wordstat_requests: int = Field(
+        default=0, description="Monthly search requests from Яндекс.Вордстат"
+    )
+    wordstat_trend: str = Field(
+        default="stable", description="Trend: growing/stable/declining"
+    )
     metrics: NicheMetrics = Field(description="Key metrics for this niche")
     pain_points: list[NichePainPoint] = Field(description="Top verified pain points")
     competitors: list[NicheCompetitor] = Field(description="Competitor landscape")
@@ -121,6 +127,8 @@ def _niche_to_score(niche: NicheIdea) -> NicheScore:
         category=niche.category,
         overall_score=niche.overall_score,
         confidence=niche.confidence,
+        wordstat_requests=niche.wordstat_requests or 0,
+        wordstat_trend=niche.wordstat_trend or "stable",
         metrics=NicheMetrics(
             yandex_wordstat_requests=niche.wordstat_requests,
             yandex_wordstat_trend=niche.wordstat_trend or "stable",

@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     wordstat_cache_ttl_days: int = 7
     wordstat_max_rps: float = 5.0
     wordstat_max_keywords_per_report: int = 2000
+    # Окно динамики для тренда (дней). 400 → захватывает месяц год назад
+    # от последней завершённой точки, чтобы считать YoY-тренд с учётом
+    # сезонности (365 дней не хватает: выравнивание на 1-е число месяца).
+    wordstat_trend_days: int = 400
 
     # YandexGPT (Foundation Models): Api-Key и каталог (folder)
     yandex_gpt_api_key: str | None = None
@@ -55,6 +59,14 @@ class Settings(BaseSettings):
         """Пустая строка из env (${VAR:-} в compose) не должна перекрывать дефолт."""
         if v == "":
             return "https://searchapi.api.cloud.yandex.net/v2/wordstat"
+        return v
+
+    @field_validator("wordstat_trend_days", mode="before")
+    @classmethod
+    def _empty_int_to_default(cls, v: object) -> object:
+        """Пустая строка из env (${VAR:-} в compose) не должна ломать int."""
+        if v == "" or v is None:
+            return 400
         return v
 
 
