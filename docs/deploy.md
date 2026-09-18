@@ -1,4 +1,4 @@
-# Деплой SaaS Niche Finder (личный инструмент)
+# Деплой SaaS Niche Finder
 
 Ориентир: Ubuntu 22.04+, Docker 24+, 2 vCPU / 4 GB RAM.
 
@@ -37,7 +37,7 @@ python backend/ml/check_artifact_metrics.py --min-accuracy 0.85
 docker compose up -d postgres redis api worker beat
 ```
 
-Миграция из старого DaaS-режима (только если БД уже существовала):
+Миграция из более ранней версии (только если БД уже существовала):
 
 ```bash
 docker compose exec -T postgres psql -U postgres -d niche_finder \

@@ -1,8 +1,10 @@
-# SaaS Niche Finder — личный инструмент
+# SaaS Niche Finder
 
-Приватная «машина» поиска B2B-ниш: парсинг VC.ru и Telegram, ML-скоринг
-(RuBERT + pgvector), Яндекс.Вордстат и YandexGPT. Без публичного
-DaaS-слоя: нет биллинга, тарифов, подписок, API-ключей и регистрации.
+Поиск B2B-ниш по сигналам из Telegram и VC.ru с ML-скорингом
+(RuBERT + pgvector), объёмами Яндекс.Вордстат и генерацией карточек через YandexGPT.
+
+Демо-проект: ETL-пайплайн (парсеры → ML → агрегация) + REST API. Без биллинга,
+тарифов и регистрации — доступ по статическому токену.
 
 ## Архитектура
 
@@ -30,7 +32,7 @@ docker compose up -d postgres redis
 
 ### 3. Миграция (только для существующей БД)
 
-Если БД уже была создана в «DaaS»-режиме — удалить старые таблицы
+Если БД уже была создана в более ранней версии — удалить старые таблицы
 users/api_keys и колонку feedback.user_id (эмбеддинги ниш сохраняются):
 
 ```bash
@@ -102,4 +104,4 @@ python -m ruff check backend tests
 - `backend/app/ml/` — RuBERT pain-классификатор, эмбеддинги
 - `backend/app/models/` — SQLAlchemy-модели (niche_ideas, raw_posts, feedback, wordstat_cache)
 - `backend/app/workers/tasks.py` — Celery-таски ETL
-- `backend/scripts/migrate_drop_users.sql` — миграция из DaaS-режима
+- `backend/scripts/migrate_drop_users.sql` — миграция из более ранней версии

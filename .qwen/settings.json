@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(.venv\\scripts\\python.exe *)",
-      "Bash(.venv\\scripts\\ruff.exe *)"
-    ]
-  },
-  "$version": 4
-}
